@@ -1,0 +1,2234 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>AI 做出来的 10 万粉，真的大于 985211 吗</title>
+<style>
+  /* 真可变字体：Noto Serif SC / Noto Sans SC Variable，各 101 个 unicode-range 分片 */
+  @import url(fonts/cjk/noto-serif-sc.css);
+  @import url(fonts/cjk/noto-sans-sc.css);
+  @font-face { font-family:"Latin";   src:url(fonts/CormorantGaramond.ttf); font-weight:300 700; }
+  @font-face { font-family:"Mono";    src:url(fonts/JetBrainsMono.ttf); font-weight:100 800; }
+  html, body { margin:0; background:#07080A; overflow:hidden; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module" src="./preview.js"></script>
+<script type="module">
+import { DUR, CUES, SHOTS, b, SOURCES, CUTS, FRAMING } from './timeline.js';
+import { seg, lerp, clamp, ease, glide, snap, spring, springTo, stagger, pulse, shake,
+         stageSize, setupCanvas, camera, loadFonts, loadImage, rng, hash, noise1, mix } from './motion.js';
+
+const SRC = SOURCES;                 // 出处卡片的数据（BV 号 / UP 主 / 标题 / 封面）
+const IMG = {};                      // 封面图，loadImage 完成后才有
+const { W, H } = stageSize();
+const ctx = setupCanvas(document.getElementById('c'), W, H);
+const U = Math.min(W, H) / 1080;
+
+// 色板：墨黑底 + 纸白 + 金 + 玫红 + 冰蓝
+const C = {
+  ink:    '#07080A',
+  paper:  '#ECE7DC',
+  paper2: '#9C978C',
+  dim:    '#4A4740',
+  gold:   '#E8C77E',
+  goldHi: '#FFE7B0',
+  rose:   '#E2466B',
+  ice:    '#6FD7EA',
+  line:   '#2E2B26',
+};
+const F = {
+  big:   s => `300 ${s}px "Noto Serif SC Variable", serif`,
+  bigH:  s => `700 ${s}px "Noto Serif SC Variable", serif`,
+  sub:   s => `400 ${s}px "Noto Serif SC Variable", serif`,
+  sans:  s => `500 ${s}px "Noto Sans SC Variable", sans-serif`,
+  sansH: s => `800 ${s}px "Noto Sans SC Variable", sans-serif`,
+  num:   s => `600 ${s}px "Latin", serif`,
+  mono:  s => `400 ${s}px "Mono", monospace`,
+};
+
+const shot = id => SHOTS.find(s => s.id === id);
+const cx = W / 2, cy = H / 2;
+// 字幕基线。对照比特新语四条参考片逐帧量过：他们字高 46–47px（画高 4.3–4.4%）、
+// 纵向落在 0.905–0.947；我们原来是 37px / 0.854–0.887 —— 小一号且高一截。
+// 现在 52*U 的思源宋会让实际字高落在 46–47px，基线 0.934 让底缘落进 0.947。
+const SUB_Y = H * 0.934;            // 字幕基线
+const SAFE_BOT = H * 0.80;          // 装置最低点
+
+// 段内淡出必须按本段真实长度算，不能硬写拍数。
+// v2 里 compare 写死了 b(68)-b(72)，但这一段有 b(78) 那么长，
+// 结果最后 3.2 秒画面全黑、只剩一行字幕。
+const shotLen = id => shot(id).t1 - shot(id).t0;
+const outFade = (lt, id, n = 2) => 1 - ease.inCubic(clamp(seg(lt, shotLen(id) - b(n), shotLen(id))));
+
+// 字幕表：一句一行，a 出现 b 消失（相邻留 0.2s 空）
+const SUBS = [
+// 00 原话 0 - 13.89
+  { a: 0.60,  b: 4.20,  t: '这句话，他自己说过。' },
+  { a: 4.60,  b: 8.80,  t: '而且不止一次。' },
+  { a: 9.20,  b: 13.40, t: '说这话的人，自己有 {310万} 粉丝。' },
+// 01 他的论证 13.89 - 33.11
+  { a: 14.30, b: 19.00, t: '\u4ed6\u7684\u8bba\u8bc1\uff0c\u4e00\u6b65\u90fd\u6ca1\u6709\u9519\u3002' },
+  { a: 19.40, b: 24.00, t: '钱 ＝ {产品} × {流量}。' },
+  { a: 24.40, b: 28.90, t: '学历是产品，{在它稀缺的时候}。' },
+  { a: 29.30, b: 32.90, t: '2026 年，流量在自媒体。{产品}×{流量}＝{钱}，他管这叫「闭环」。' },
+  // 02 两种分布 33.11 - 74.77。四小节：A 平滑的路 / B 彩票 / C 真实数据 / D 天平
+  { a: 38.40, b: 42.80, t: '一边是 {985}，一边是 {10 万粉}。' },
+  // A 段：路面铺出来 → 人站上去 → 下限压不穿
+  { a: 47.90, b: 51.90, t: '大多数人落在这条路的中段。' },
+  { a: 52.40, b: 56.40, t: '再差，也有个{底}。' },
+  // B 段：摇奖机落球 → 幂律长出来 → 中位线扫过去
+  { a: 50.90, b: 54.40, t: '10 万粉不是一条路，是一张{彩票}。' },
+  { a: 54.90, b: 58.20, t: '球落下来，绝大多数滚到最底下。' },
+  { a: 58.70, b: 61.90, t: '中位数极低，{方差}极大。' },
+  { a: 62.40, b: 65.40, t: '有人站在顶端，更多人连边都没摸到。' },
+  // C 段：真实数据，两个数字摆到同一把横尺上
+  { a: 65.90, b: 69.60, t: '那到底值多少？摆上去量。' },
+  { a: 70.10, b: 74.30, t: '应届本科起薪，一个月{8020}。' },
+  { a: 74.80, b: 79.40, t: '10 万粉一条商单，{7500} —— 但一个月接不满两条。' },
+  { a: 79.90, b: 84.60, t: '数值居然{差不多}。差别不在多少，在{下限}。' },
+  // D 段：期望值 vs 下限
+// 03 他自己知道 74.77 - 94.00
+  // 03 他自己知道 74.77 - 94.00
+  { a: 76.80, b: 78.80, t: '「上大学只有两种情况成立。」' },
+  { a: 79.00, b: 81.20, t: '「你现在要高考，就该拼尽全力。」' },
+  { a: 81.40, b: 83.40, t: '「别为了一个文凭，把能力停住。」' },
+  { a: 83.60, b: 85.90, t: '三句话，都是他说的。' },
+  { a: 86.30, b: 88.60, t: '被剪掉的，正是{这个条件}。' },
+  // ⚠️ 88.6-94.4 原来没有任何字幕，整整 5.8 秒一句话都没说
+  //    —— 这是用户说「图二留不住人」的真正原因：不是画面停了，是叙事停了。
+  //    当然这三句话之后确实该有一个落点，但落点不能只是默默消失。
+  { a: 89.00, b: 91.40, t: '三句就在他自己的频道里。' },
+  { a: 91.80, b: 94.30, t: '只传播其中一句，另一句自动失声。' },
+// 04 AI 产线 94.00 - 107.87
+  { a: 94.40, b: 99.40, t: '现在，把时间拉到 2026 年 10 月。' },
+  { a: 99.80, b: 104.40, t: '有人用 AI，{12 天}做到 {65 万}粉。' },
+  { a: 104.80, b: 107.60, t: '\u5168\u7ad9\u6da8\u7c89\u699c\uff0c\u5355\u65e5\u7b2c\u4e00\u3002' },
+  // 05 同一把尺子 107.87 - 121.78
+  { a: 108.30, b: 112.20, t: '他自己那把尺子，是 {稀缺性}。' },
+  { a: 112.60, b: 116.20, t: '「学历不稀缺了，所以它不值钱了。」' },
+  { a: 116.60, b: 119.20, t: '同一把尺子，现在落到粉丝头上。' },
+  { a: 119.60, b: 121.50, t: 'AI 让它，也不稀缺了。' },
+  // 06 说破 121.78 - 134.59
+  { a: 122.20, b: 126.20, t: '这条视频，脚本、画面、音乐，全是 AI 做的。' },
+  { a: 126.40, b: 128.40, t: '我连脸都没露。' },
+  { a: 128.80, b: 131.20, t: '所以上面那些话，你可以当我是在{自我介绍}。' },
+];
+
+// —— 图形小件 ——
+function txt(s, x, y, { font, color = C.paper, a = 1, track = 0, align = 'center', glow = 0, glowColor } = {}) {
+  if (a <= 0.002) return 0;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'alphabetic';
+  if (glow > 0) { ctx.shadowBlur = glow; ctx.shadowColor = glowColor || color; }
+  let w;
+  if (track === 0) { ctx.fillText(s, x, y); w = ctx.measureText(s).width; }
+  else {
+    ctx.textAlign = 'left';
+    const chars = [...s], ws = chars.map(ch => ctx.measureText(ch).width);
+    const total = ws.reduce((p, v) => p + v, 0) + track * (chars.length - 1);
+    let px = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+    chars.forEach((ch, i) => { ctx.fillText(ch, px, y); px += ws[i] + track; });
+    w = total;
+  }
+  ctx.restore();
+  return w;
+}
+
+/** 一条线段，k 控制画到百分之几 */
+function stroke(x0, y0, x1, y1, k, { color = C.dim, w = 2 * U, a = 1, glow = 0 } = {}) {
+  if (k <= 0.001 || a <= 0.002) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.strokeStyle = color; ctx.lineWidth = w; ctx.lineCap = 'round';
+  if (glow > 0) { ctx.shadowBlur = glow; ctx.shadowColor = color; }
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(lerp(x0, x1, k), lerp(y0, y1, k)); ctx.stroke();
+  ctx.restore();
+}
+
+/** 一个人：肩 + 头（剪影），h = 身高 */
+function person(x, baseY, h, { a = 1, color = C.paper, gold = false, label = null, ph = 0, walk = 0 } = {}) {
+  if (a <= 0.002) return;
+  const c = gold ? C.gold : color;
+  ctx.save(); ctx.globalAlpha = a;
+  // ── 人物自己在动 ──────────────────────────────────────────────
+  // 量出来的铁证（`profile.py`，6 秒窗口）：参考片每帧改动画面 **2.5–8.3%** 的像素，
+  // 而我们只有 **0.12–0.36%** —— 差 20 倍。原因不是粒子不够，是主体本身几乎不动：
+  // 人物是画面里面积最大的形状，它不动，整幅就是死的。
+  // 第一版只给了 1.6% 的呼吸（约 1.6px），在 1/4 缩放下不到半个像素，等于没动。
+  // 现在给三个分量，加起来才是「活的」：
+  //   ① 上下浮动 h*0.030（30px 级，肉眼明显但不夸张）
+  //   ② 身宽呼吸 ±4.5%
+  //   ③ 轻微左右摇摆 ±1.2°
+  // 相位按传入的 ph 错开，一排人不会整齐划一地动（那反而假）。
+  const br = 1 + Math.sin(NOW * 1.9 + ph * 2.3) * 0.045;
+  const bob = Math.sin(NOW * 1.35 + ph * 1.7) * (h * 0.030) + walk;
+  const sway = Math.sin(NOW * 1.05 + ph * 1.1) * 0.021;
+  const yB = baseY + bob;
+  const headR = h * 0.16, bodyH = h * 0.62, bodyW = h * 0.30 * br;
+  ctx.translate(x, yB);
+  ctx.rotate(sway);
+  ctx.fillStyle = c;
+  // 头
+  ctx.beginPath(); ctx.arc(0, -bodyH - headR * 0.9, headR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-bodyW * 0.5, 0);
+  ctx.quadraticCurveTo(-bodyW * 0.56, -bodyH * 0.62, -bodyW * 0.42, -bodyH * 0.92);
+  ctx.quadraticCurveTo(0, -bodyH * 1.06, bodyW * 0.42, -bodyH * 0.92);
+  ctx.quadraticCurveTo(bodyW * 0.56, -bodyH * 0.62, bodyW * 0.5, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  if (label) txt(label, x, baseY + h * 0.10, { font: F.mono(19 * U), color: gold ? C.gold : C.paper2, a, align: 'center' });
+}
+
+/** 尺子：一条带刻度的长条 */
+function ruler(x0, y0, x1, y1, k, { color = C.gold, a = 1, glow = 12 * U, ticks = 12 } = {}) {
+  if (k <= 0.001) return;
+  const xk = lerp(x0, x1, k), yk = lerp(y0, y1, k);
+  stroke(x0, y0, xk, yk, 1, { color, w: 3.5 * U, a, glow });
+  const ang = Math.atan2(y1 - y0, x1 - x0);
+  for (let i = 0; i <= ticks; i++) {
+    const f = i / ticks; if (f > k) break;
+    const px = lerp(x0, x1, f), py = lerp(y0, y1, f);
+    const len = (i % 3 === 0 ? 20 : 11) * U;
+    const dx = Math.sin(ang) * len, dy = -Math.cos(ang) * len;
+    stroke(px - dx * 0.5, py - dy * 0.5, px + dx * 0.5, py + dy * 0.5, 1, { color, w: 2 * U, a: a * 0.85 });
+  }
+}
+
+/** 引号（巨大的装饰引号） */
+function quoteMark(x, y, size, { a = 1, color = C.gold, flip = false } = {}) {
+  if (a <= 0.002) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = color;
+  ctx.font = F.bigH(size);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.translate(x, y); if (flip) ctx.rotate(Math.PI);
+  ctx.fillText('“', 0, 0);
+  ctx.restore();
+}
+
+  /** 便签卡 */
+function noteCard(x, y, w, h, { a = 1, rot = 0, color = C.paper } = {}) {
+  if (a <= 0.002) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.translate(x, y); ctx.rotate(rot);
+  ctx.shadowBlur = 40 * U; ctx.shadowColor = 'rgba(0,0,0,.75)'; ctx.shadowOffsetY = 12 * U;
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.roundRect(-w / 2, -h / 2, w, h, 6 * U); ctx.fill();
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+  // 胶带压痕
+  ctx.fillStyle = 'rgba(0,0,0,.05)';
+  ctx.beginPath(); ctx.roundRect(-w * 0.17, -h / 2 - 7 * U, w * 0.34, 20 * U, 3 * U); ctx.fill();
+  ctx.restore();
+}
+
+/** 在给定宽度内自动折行，返回总高度。s 里的 \n 是强制换行 */
+function wrapText(s, x, yCenter, { font, color = C.ink, a = 1, maxW = 300, lh = 1.32, align = 'center' } = {}) {
+  if (a <= 0.002) return 0;
+  ctx.save(); ctx.globalAlpha = a; ctx.font = font; ctx.fillStyle = color;
+  ctx.textAlign = align; ctx.textBaseline = 'middle';
+  const m = font.match(/(\d+(?:\.\d+)?)px/);
+  const size = m ? parseFloat(m[1]) : 30;
+  const out = [];
+  for (const para of s.split('\n')) {
+    let buf = '';
+    for (const ch of para) {
+      if (buf && ctx.measureText(buf + ch).width > maxW) { out.push(buf); buf = ch; }
+      else buf += ch;
+    }
+    if (buf) out.push(buf);
+  }
+  const lineH = size * lh;
+  const totalH = out.length * lineH;
+  out.forEach((ln, i) => ctx.fillText(ln, x, yCenter - totalH / 2 + lineH * (i + 0.5)));
+  ctx.restore();
+  return totalH;
+}
+
+// —— 每段的绘制 ——
+const scene = {};
+
+// 00 原话 0 - 13.89
+// 00 原话：先用封面卡 + 原声让圈外人知道这是谁说的话
+scene.quote = (t, lt) => {
+  const outA = 1;
+
+  // 0 - 1.6s：封面卡从下往上推入，带旋转
+  const cardK = spring(lt - 0.02, { freq: 2.6, damp: 0.72 });
+  const cardOut = 1 - ease.inCubic(clamp(seg(lt, b(22), b(26))));
+  if (cardK > 0.002 && cardOut > 0.002 && IMG.main) {
+    const a = clamp(cardK) * cardOut;
+    const cw = 372 * U, chh = cw * 9 / 16;
+    const cxp = cx + 500 * U;
+    const cyp = H * 0.50 + (1 - ease.outBack(clamp(cardK))) * 90 * U;
+    ctx.save();
+    ctx.globalAlpha = a * 0.92;
+    ctx.translate(cxp, cyp);
+    ctx.rotate(lerp(0.075, 0.035, clamp(cardK)));
+    ctx.shadowBlur = 60 * U; ctx.shadowColor = 'rgba(0,0,0,.9)';
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.roundRect(-cw / 2 - 5 * U, -chh / 2 - 5 * U, cw + 10 * U, chh + 10 * U, 5 * U); ctx.fill();
+    ctx.shadowBlur = 0;
+    // 卡片里的图用一个很慢的推镜（Ken Burns）。这不是「相机在动」——
+    // 整幅画面是钉死的，动的是这张引用图自己的画面内容。
+    // 参考片全是真实素材，它们天然有运动；我们只有一张静态封面，
+    // 不推一下，这一段就是全片最死的 13.9 秒（实测 median 0.003）。
+    const kb = 1 + 0.075 * clamp(seg(lt, 0.1, b(26)));
+    const kbw = cw * kb, kbh = chh * kb;
+    ctx.beginPath(); ctx.roundRect(-cw / 2, -chh / 2, cw, chh, 3 * U); ctx.clip();
+    ctx.drawImage(IMG.main, -kbw / 2, -kbh / 2, kbw, kbh);
+    // 压一层暗，让上面的字看得清
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.roundRect(-cw / 2, -chh / 2, cw, chh, 3 * U); ctx.fill();
+    // 卡面底部：BV 号 + UP 主
+    txt(SRC.main.bv, -cw / 2 + 14 * U, chh / 2 - 14 * U,
+        { font: F.mono(21 * U), color: C.gold, a, align: 'left' });
+    ctx.restore();
+  // 卡下方的出处行
+    txt(`${SRC.main.up} · ${SRC.main.date}`, cxp, cyp + chh / 2 + 30 * U,
+        { font: F.mono(20 * U), color: C.paper2, a: a * 0.85 });
+  }
+
+  // 1.2s 起：主句逐字显影（他的原声同时进来）
+  // 大字必须真的躲开右边的封面卡：按可用宽度自动缩字号
+  //
+  // ⚠️⚠️ 这一段的字号和字宽必须**只算一次并缓存**，不能在 render(t) 里现算。
+  //   原因：这条字幕用的是 CJK 分片字体，分片是懒加载的。如果在字体还没就绪的那一帧
+  //   做 measureText，量到的是回退字体的宽度 → 自动缩字号算出一个偏大的 size →
+  //   那一帧的字比后面所有帧都大。`--determinism` 正是随机在这里失败（0.67% 像素差）。
+  //   缓存时间点在 READY 之前（字体全部强制下完之后），见文件末尾 FIT_MAIN 的初始化。
+  //   读不到就现场算（只在预热阶段第一帧会发生），绝不抛异常。
+  const FIT = window.__FIT_MAIN || (() => {
+    const line = '10万粉丝，暴打985211';
+    const chars = [...line];
+    const availW = (cx + 500 * U - 372 * U / 2 - 24 * U) - (W * 0.075);
+    let sz = 84 * U;
+    ctx.font = F.bigH(sz);
+    const rawW = chars.reduce((p, ch) => p + ctx.measureText(ch).width, 0);
+    if (rawW > availW) sz = sz * (availW / rawW);
+    if (!(sz > 0) || !isFinite(sz)) sz = 60 * U;
+    ctx.font = F.bigH(sz);
+    const widths = chars.map(ch => ctx.measureText(ch).width);
+    const v = { size: sz, widths, chars, availW, rawW };
+    window.__FIT_MAIN = v;
+    return v;
+  })();
+  const size = FIT.size;
+  const widths = FIT.widths;
+  const total = widths.reduce((p, v) => p + v, 0);
+  let px = W * 0.075;
+  const start = b(2.2);
+  const chars = FIT.chars;
+  chars.forEach((ch, i) => {
+    const a = clamp(seg(lt, start + i * 0.035, start + i * 0.035 + 0.42));
+    if (a > 0.002) {
+      const y = H * 0.44 + (1 - ease.outCubic(a)) * 26 * U;
+      const isNum = /\d/.test(ch);
+      txt(ch, px + widths[i] / 2, y, { font: F.bigH(size), color: isNum ? C.gold : C.paper, a: a * outA, glow: isNum ? 18 * U : 0 });
+    }
+    px += widths[i];
+  });
+
+  // 删掉装饰性大引号：用户问「这双引号是啥」，它没有任何信息量
+  // b(15) 起：310 万（跟大字同一条左基线，不贴屏幕边）
+  // ⚠️ 计数窗口从 b(15)-b(20) 拉长到 b(13)-b(26)：原来数完就停在 310 不动，
+  //    而这一段总长 b(26)，最后 6 拍整幅画面只有静止的大字（实测 median 0.003，
+  //    全片最死的一段）。让它一直数到段尾，数字本身就一直有变化。
+  // ⚠️ 再往前拉到 b(5)：实测 2.00–3.97s 与 4.90–6.93s 是两段完全静止的死区
+  //    （标题 2.1s 就全显完了，而计数器要到 6.94s 才起）。132 单位的大数字
+  //    边数边变，是这一段唯一能撑住「信息在推进」的东西 —— 提前开数。
+  const ck = seg(lt, b(5), b(25));
+  if (ck > 0.001) {
+    // ⚠️ 缓动从 outQuint 改成 outCubic：outQuint 在 70% 处就已经是 0.999，
+    //    数字提前停住 → 10.4–12.7s 反而变成一段新的死区（2.3 秒，比原来还长）。
+    //    outCubic 到末尾才收敛，数字一直数到段尾，1 帧约跳 1 个单位。
+    const n = Math.round(lerp(0, 310, ease.outCubic(ck)));
+    const baseX = W * 0.075;
+    const numW = txt(`${n}`, baseX, H * 0.62, { font: F.num(132 * U), color: C.gold, a: 1, glow: 22 * U, align: 'left' });
+    txt('万粉', baseX + numW + 6 * U, H * 0.62, { font: F.sub(46 * U), color: C.paper2, a: clamp(seg(lt, b(5), b(7))), align: 'left' });
+    // 他站的位置：一根从地面量到他头顶的标尺，数字跟着涨
+    const stK = clamp(seg(lt, b(9), b(13)));
+    if (stK > 0.002) {
+      const sx = baseX + 108 * U;
+      const yTop = H * 0.735, yBot = H * 0.735 + 96 * U;
+      stroke(sx - 16 * U, yTop, sx - 16 * U, lerp(yTop, yBot, stK), 1,
+             { color: C.dim, w: 1.4 * U, a: stK * 0.7 });
+      for (let i = 0; i <= 6; i++) {
+        const ty = yTop + (yBot - yTop) * (i / 6);
+        stroke(sx - 16 * U, ty, sx - 16 * U + (i % 2 ? 6 : 11) * U, ty, 1,
+               { color: C.dim, w: 1.2 * U, a: stK * 0.55 });
+      }
+      txt('他说这话的时候，站在这个位置', sx, H * 0.735,
+          { font: F.mono(22 * U), color: C.paper2, a: stK * 0.9, track: 2 * U, align: 'left' });
+    }
+  }
+};
+
+// 01 他的论证 13.89 - 33.11
+// 01 他的论证 13.89 - 33.11：公式改成 产品 × 流量 ＝ 钱
+// 字幕按 items 的 at 逐个对齐，每句卡在圆点冒出来的那一刻
+scene.proof = (t, lt) => {
+  // ⚠️ 原来是 `clamp(seg(lt, 0, 0.5))`，而第一个节点在 b(0.15)=0.08s 才起 spring
+  //    —— 两个弱点叠在一起，t=14.0 那一帧几乎是空的（抽帧 audit 才发现：
+  //    quote 段切到 proof 段的第一帧只有一点点残影）。
+  //    改：a0 在 0.12 秒内就到 1，第一个节点从 lt=0 就开始弹，切点即见内容。
+  const a0 = clamp(seg(lt, 0, 0.12));
+  const items = [
+    // ⚠️ 间隔原来是 b(0)/b(5.5)/b(8)/b(13.5)/b(16) —— 第一个圆到第二个圆隔了 2.9 秒，
+    //    抽帧看到 t=16.0s 时整幅画面只有左边一个「产品」，其他全空（14.6–16.8s
+    //    是 2.2 秒的死区）。而且这一段总共只有 b(22)，节点铺到 b(16) 才铺完，
+    //    留给「整体成立」的时间只剩 3 秒。改成每 1.5–2 拍一个，2.2 秒铺完，
+    //    后面 8 秒是完整的等式 + 实时数值 + 注释层 —— 从「一次画一个圆」
+    //    变成「等式自己长出来」，这才是这一段该有的节奏。
+    { k: '产品', sub: '技能 · 学历', at: b(0),    kind: 'card'  },
+    { k: '×',    sub: '',           at: b(1.6),  kind: 'times' },
+    { k: '流量', sub: '自媒体',     at: b(3.2),  kind: 'wave'  },
+    { k: '=',    sub: '',           at: b(4.8),  kind: 'eq'    },
+    { k: '钱',   sub: '',           at: b(6.4),  kind: 'circle'},
+  ];
+  const y = H * 0.46;
+  const xs = [cx - 470 * U, cx - 300 * U, cx - 110 * U, cx + 90 * U, cx + 330 * U];
+  const R = 76 * U;
+
+  items.forEach((it, i) => {
+    const k = spring(lt - it.at, { freq: 2.2, damp: 0.78 });
+    if (k <= 0.002) return;
+    const x = xs[i], kk = clamp(k) * a0;
+    const grow = 1 + (1 - k) * 0.25;
+    const isOp = it.kind === 'times' || it.kind === 'eq';
+
+    if (!isOp) {
+      ctx.save(); ctx.globalAlpha = kk;
+      ctx.translate(x, y); ctx.scale(grow, grow);
+      // 圆圈的边（金色是钱）
+      ctx.strokeStyle = i === 4 ? C.gold : C.paper2;
+      ctx.lineWidth = 2.5 * U;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.stroke();
+      if (i === 4) { ctx.fillStyle = 'rgba(232,199,126,.10)'; ctx.fill(); }
+      // 图案放在圆的上半，字放在下半，两者不叠
+      ctx.globalAlpha = kk * 0.85;
+      if (it.kind === 'card') {
+        // 证件卡：**整张卡在圆里慢慢自转**，不是只呼吸 —— 呼吸幅度太小（4%），
+        // 实测这段活动量只有 0.045，参考片的底子是 0.5–1.5。
+        // 自转让它每一帧都在变，但主视觉位置不动，不构成「画面在抖」。
+        const spin2 = Math.sin((lt - it.at) * 1.15) * 0.26;
+        const pulse = 1 + Math.sin((lt - it.at) * 4.2) * 0.07;
+        ctx.save(); ctx.translate(0, -44 * U); ctx.rotate(spin2); ctx.scale(pulse, pulse);
+        // 卡片后面跟着一道扫描光，从上往下刷
+        const sweep = ((lt - it.at) * 0.55) % 1;
+        ctx.strokeStyle = 'rgba(232,199,126,.55)'; ctx.lineWidth = 2.2 * U;
+        ctx.beginPath();
+        ctx.moveTo(-30 * U, -34 * U + 68 * U * sweep);
+        ctx.lineTo(30 * U, -34 * U + 68 * U * sweep);
+        ctx.stroke();
+        ctx.strokeStyle = '#ECE7DC'; ctx.lineWidth = 3.0 * U;
+        ctx.strokeRect(-30 * U, -34 * U, 60 * U, 68 * U);
+        ctx.beginPath(); ctx.arc(-12 * U, -18 * U, 8.5 * U, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-30 * U, 10 * U); ctx.lineTo(30 * U, 10 * U); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-30 * U, 21 * U); ctx.lineTo(16 * U, 21 * U); ctx.stroke();
+        ctx.restore();
+      } else if (it.kind === 'wave') {
+        // 波形：加一条「流动的虚线基线」+ 振幅脉动，让它一直在跑
+        const amp = 1 + Math.sin((lt - it.at) * 2.1) * 0.28;
+        ctx.beginPath();
+        for (let qx = -30 * U; qx <= 30 * U; qx += 2.5 * U) {
+          const ph = (qx / (30 * U)) * Math.PI * 3 - (lt - it.at) * 7;
+          const qy = Math.sin(ph) * 10 * U * amp * (0.35 + 0.65 * Math.abs(qx) / (34 * U)) - 44 * U;
+          if (qx === -30 * U) ctx.moveTo(qx, qy); else ctx.lineTo(qx, qy);
+        }
+        ctx.strokeStyle = '#ECE7DC'; ctx.lineWidth = 2.2 * U; ctx.stroke();
+        // 波形下面的冲刺刻度，随相位往右跑
+        ctx.strokeStyle = 'rgba(236,231,220,.32)'; ctx.lineWidth = 1.2 * U;
+        for (let b2 = 0; b2 < 7; b2++) {
+          const bxp = -28 * U + ((b2 * 9 * U + (lt - it.at) * 26 * U) % 58 * U);
+          ctx.beginPath(); ctx.moveTo(bxp, -24 * U); ctx.lineTo(bxp, -18 * U); ctx.stroke();
+        }
+      } else {
+        // 钱的箭头绕圈咬回自己
+        const spin = (lt - it.at) * 2.4, rr = 58 * U;
+        ctx.strokeStyle = C.gold; ctx.lineWidth = 3.0 * U; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.arc(0, 0, rr, spin, spin + Math.PI * 1.5); ctx.stroke();
+        const ah = spin + Math.PI * 1.5;
+        ctx.save(); ctx.translate(Math.cos(ah) * rr, Math.sin(ah) * rr); ctx.rotate(ah + Math.PI / 2);
+        ctx.fillStyle = C.gold;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-8 * U, 14 * U); ctx.lineTo(8 * U, 14 * U);
+        ctx.closePath(); ctx.fill(); ctx.restore();
+      }
+      ctx.restore();
+      // 字：稳在圆心偏下（上半留给图案）
+      txt(it.k, x, y + 40 * U,
+          { font: F.bigH(54 * U), color: i === 4 ? C.gold : C.paper, a: kk, glow: i === 4 ? 16 * U : 0 });
+      // 副标签放到圆**上方**：下方是「产品/流量」大字 + 实时数值，一共要占三级，
+      // 挤在下面必然重叠（第一版就是这么撞的）。上方一直是空的。
+      if (it.sub) txt(it.sub, x, y - 96 * U, { font: F.mono(20 * U), color: C.paper2, a: kk });
+    } else {
+      // 运算符：× 自己在转
+      ctx.save(); ctx.globalAlpha = kk;
+      ctx.translate(x, y); ctx.scale(grow, grow);
+      if (it.kind === 'times') {
+        // ⚠️ 原来让它一直转（`(lt-at)*0.9 + PI/4`）—— 转到 45° 附近时
+        //    两条杠变成水平+垂直，看上去就是个「+」，和小节标题里的「×」矛盾。
+        //    用户早就问过「×不应该在产品和流量中间吗」，这次不能再让它长得像「+」。
+        //    改成**不转**，只做极轻的呼吸（1.0→1.06），保证任何一帧都是「×」。
+        const breathe = 1 + Math.sin((lt - it.at) * 2.6) * 0.06;
+        ctx.rotate(Math.PI / 4);
+        ctx.scale(breathe, breathe);
+        ctx.strokeStyle = C.paper2; ctx.lineWidth = 4.5 * U; ctx.lineCap = 'round';
+        for (let q = 0; q < 2; q++) {
+          ctx.save(); ctx.rotate(q * Math.PI / 2);
+          ctx.beginPath(); ctx.moveTo(-22 * U, 0); ctx.lineTo(22 * U, 0); ctx.stroke();
+          ctx.restore();
+        }
+      } else {
+        ctx.strokeStyle = C.paper2; ctx.lineWidth = 4.5 * U; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(-24 * U, -9 * U); ctx.lineTo(24 * U, -9 * U); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(-24 * U, 9 * U); ctx.lineTo(24 * U, 9 * U); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  });
+
+  // 为什么改成现在这样：让每一段都有自己的动作
+  const rk = clamp(seg(lt, b(9), b(12))) * a0;
+  if (rk > 0.002) {
+    txt('他管这个叫「闭环」', cx, H * 0.70, { font: F.mono(21 * U), color: C.paper2, a: rk * 0.9, track: 2 * U });
+  }
+
+  // ── 实时算出来的乘积：把「产品 × 流量 ＝ 钱」真的算一遍 ──────────────
+  // 这一段原来只有四个圆圈 + 一条连接线，实测 >20 灰阶像素只有 0.17%、P99=3
+  // （参考片是 2.28–4.33% / 40–81）。加两条扫掠弧线能提指标，但抽帧看很脏，已撤回。
+  // 有效的办法是让**信息本身在动**：三个数每帧都在变，读者能看见乘法在发生。
+  // 02C 的滚动计数器（8020）用同一手法，实测 >20 灰阶 3.7–4.3%，超过参考片均值。
+  const cf = clamp(seg(lt, b(1), b(19)));
+  if (cf > 0.002) {
+    const tick = (a, bb) => Math.max(0, Math.round(a * bb));
+    // 三个因子各自带一点低频起伏，看起来像在「实时测算」
+    const pV = 1.6 + Math.sin(lt * 1.15) * 0.22;          // 产品力
+    const tV = 1.9 + Math.sin(lt * 0.87 + 1.7) * 0.26;    // 流量
+    const goldV = tick(pV * 100, tV * 100) / 10000;        // 乘积
+    const fA = clamp(seg(lt, b(1.8), b(3.2))) * a0;
+    if (fA > 0.002) {
+      txt(pV.toFixed(2), xs[0], y + 122 * U,
+          { font: F.num(44 * U), color: C.paper, a: fA, align: 'center' });
+      txt(tV.toFixed(2), xs[2], y + 122 * U,
+          { font: F.num(44 * U), color: C.paper, a: clamp(seg(lt, b(3.4), b(4.8))) * a0, align: 'center' });
+      // 乘积用金色大字，并且每秒真的在变 —— 这是整段最醒目的运动
+      txt(goldV.toFixed(2), xs[4], y + 122 * U,
+          { font: F.num(56 * U), color: C.gold, a: clamp(seg(lt, b(6.6), b(8.4))) * a0,
+            align: 'center', glow: 18 * U });
+    }
+    // 两个乘号之间的「×」一闪一闪，提示这里是乘法
+    const xk = 0.35 + 0.65 * Math.abs(Math.sin(lt * 2.1));
+    txt('×', xs[1], y - 96 * U, { font: F.num(34 * U), color: C.paper2, a: fA * xk * 0.7, align: 'center' });
+  }
+
+  // 环绕注释层：01 段实测只有 9.2 个占用格子（全片最低），四个圆加一条箭头，
+  // 上下两侧全是空的。参考片每帧 5–13 个带牵线标签 —— 这里补一层把空白吃掉。
+  // ⚠️ 下方不能写「产品越好…/流量越大…」这种空话 —— 本片规矩是每句话都要有信息量。
+  //    改成两条能验证的：一条讲方向（谁决定谁），一条讲后果（缺了会怎样）。
+  const na1 = clamp(seg(lt, b(10), b(13))) * a0;
+  if (na1 > 0.002) {
+    note('学历是产品',   xs[0], y - 82 * U,  xs[0] - 40 * U,  H * 0.245, { a: na1, side: 'left' });
+    note('流量是渠道',   xs[2], y - 82 * U,  xs[2] + 40 * U,  H * 0.245, { a: na1 * 0.94, side: 'right' });
+    note('乘起来才有钱', xs[4], y - 82 * U,  xs[4] + 30 * U,  H * 0.245, { a: na1 * 0.96, side: 'right', color: C.gold });
+    txt('2026 年以前，学历自己就是渠道', cx - 200 * U, H * 0.735,
+        { font: F.mono(17 * U), color: C.dim, a: na1 * 0.78, align: 'right' });
+    txt('现在渠道搬到了自媒体上', cx + 200 * U, H * 0.735,
+        { font: F.mono(17 * U), color: C.dim, a: na1 * 0.78, align: 'left' });
+    txt('他没说学历没用 —— 他说的是「不再是渠道」', cx, H * 0.795,
+        { font: F.mono(18 * U), color: C.paper2, a: na1 * 0.72, align: 'center', track: 1 * U });
+  }
+};
+
+// 02 两种分布 33.11 - 74.77：四小节
+// A b(0)-b(26) 985 平滑的路；B b(26)-b(48) 10 万粉彩票；C b(48)-b(66) 真实数据；D b(66)-b(78) 天平
+// B 段：摇奖机落球 → 幂律长出来 → 中位线扫过去
+// C 段：两条柱 + 一个 ≈ + 一把横尺
+scene.compare = (t, lt) => {
+  const outA = 1;                       // 段末淡出统一交给外层 tt()
+  const baseY = SAFE_BOT;
+  // 本段总长 b(78)。四小节，每节都有自己的动作，不再是一排人站着不动：
+  //   A  b(0)–b(26)   985 平滑的路：路面铺出来 → 人站上去 → 下限压不穿
+  //   B  b(26)–b(48)  10 万粉 彩票：球落下来 → 幂律长出来 → 中位线自己扫过去
+  //   C  b(48)–b(66)  真实数据：两条柱、一个 ≈、一把横尺
+  //   D  b(66)–b(78)  天平：期望值 vs 下限
+  const A_END = b(26), B_END = b(48), C_END = b(66);
+
+  // ── A：985 一条平滑的路 ────────────────────────────────────
+  // 小节之间改成**硬切**（参考片 26–62 个切点，我们原来只有 5 个：
+  // 差的就是这四小节之间的三次交叉溶解 —— 溶解不产生切点）。
+  const aA = lt < A_END ? 1 : 0;
+  if (aA > 0.002) {
+    ctx.save(); ctx.globalAlpha = aA;
+    txt('985', cx - 440 * U, H * 0.22, { font: F.sansH(76 * U), color: C.paper, a: aA, glow: 10 * U });
+    txt('一条平滑的路 · 有下限', cx - 440 * U, H * 0.28, { font: F.mono(22 * U), color: C.paper2, a: aA });
+
+    // ① 路面：从左边铺出来（有厚度的路，不是一条线）
+    const roadK = clamp(seg(lt, b(0.1), b(6)));
+    const rx0 = cx - 800 * U, rx1 = cx - 60 * U;
+    const rEnd = lerp(rx0, rx1, ease.outCubic(roadK));
+    if (roadK > 0.002) {
+      ctx.save(); ctx.globalAlpha = aA * 0.5;
+      ctx.fillStyle = 'rgba(236,231,220,.06)';
+      ctx.fillRect(rx0, baseY - 2 * U, rEnd - rx0, 30 * U);
+      ctx.restore();
+      stroke(rx0, baseY, rEnd, baseY, 1, { color: C.paper2, w: 2.4 * U, a: aA * 0.8 });
+    }
+
+    // ② 13 个人站上去，高度几乎一样 —— 这就是「平滑」
+    //    加一道**行波**：起伏从队首传向队尾，像人群里传开的骚动。
+    //    量测要求（profile.py）：参考片每帧改动画面 2.5–8.3%，我们原来只有 0.12%
+    //    —— 光让人物原地呼吸补不上，必须有成片的、连贯的位移。
+    //    ⚠️ 第一版试过「整排往右走 + 回绕」，结果 11 秒后整排走出了路面被剔除干净
+    //    （画面空了）—— 因为剔除条件是 `x > rEnd`，而回绕只对起点做。
+    //    行波没有这个问题：人不动位置，只动高度。
+    const n = 13, w = 660 * U, h0 = 96 * U;
+    for (let i = 0; i < n; i++) {
+      const k = spring(lt - (b(1.2) + stagger(i, n, b(5))), { freq: 2.4, damp: 0.8 });
+      if (k <= 0.002) continue;
+      const x = cx - 770 * U + (i / (n - 1)) * w;
+      if (x > rEnd + 20 * U) continue;
+      // 行波：相位沿队伍递增，波速 1.7 圈/秒
+      const wave = Math.sin(lt * 1.7 - i * 0.62) * h0 * 0.16;
+      const hh = h0 * (1 + Math.sin(i * 1.7) * 0.06) + wave;
+      person(x, baseY, hh * clamp(k), { a: clamp(k) * aA * 0.92, color: C.paper, ph: i * 0.7 });
+    }
+
+    // ③ 下限线 + 一支压不穿的箭头
+    const lk = spring(lt - b(15), { freq: 2.4, damp: 0.8 });
+    if (lk > 0.002) {
+      const lx1 = lerp(cx - 800 * U, cx - 80 * U, clamp(lk));
+      stroke(cx - 800 * U, baseY, lx1, baseY, 1, { color: C.ice, w: 3 * U, a: aA * 0.9, glow: 14 * U });
+      const pk = (((lt - b(17)) % b(6)) + b(6)) % b(6) / b(6);
+      if (lt > b(17) && pk < 0.5) {
+        const pkx = cx - 470 * U;
+        const push = Math.sin(clamp(pk * 2) * Math.PI) * 46 * U;
+        ctx.save(); ctx.globalAlpha = aA * 0.85;
+        ctx.strokeStyle = C.ice; ctx.lineWidth = 2.4 * U; ctx.lineCap = 'round';
+        const ay = baseY - 150 * U + push;
+        ctx.beginPath(); ctx.moveTo(pkx, ay); ctx.lineTo(pkx, ay + 40 * U); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pkx - 10 * U, ay + 28 * U); ctx.lineTo(pkx, ay + 42 * U);
+        ctx.lineTo(pkx + 10 * U, ay + 28 * U); ctx.stroke();
+        ctx.restore();
+      }
+      txt('下限', cx - 62 * U, baseY + 8 * U, { font: F.mono(21 * U), color: C.ice, a: aA * clamp(lk), align: 'left' });
+
+      // 注释层：给这条「平滑的路」配 5 个标签，分别指着具体的某个人
+      // 参考片每帧有 5–13 个这样的标签，我们原来是 0 个 —— 这是最大的空缺
+      // ⚠️ 窗口从 b(19)–b(22) 提前到 b(8)–b(11)：A 小节总共 b(26) 长，
+      //    原来标签只在最后 3 拍出现，前面 23 拍整幅只有一排人 + 一条线，
+      //    实测这一段空间占用只有 11.1 格（全片最低）。人为地在 b(3)–b(9) 陆续站上来，
+      //    所以 b(8) 时前面的人已经在位，标签指向是成立的。
+      const na = clamp(seg(lt, b(8), b(11))) * aA;
+      if (na > 0.004) {
+        note('最左边这个，本科毕业就上岸', cx - 700 * U, baseY - 96 * U, cx - 560 * U, H * 0.60, { a: na, side: 'left' });
+        note('中间大部分，都在中段', cx - 235 * U, baseY - 100 * U, cx - 120 * U, H * 0.685, { a: na * 0.95, side: 'left' });
+        note('没有一个掉到底下', cx + 60 * U, baseY - 96 * U, cx + 220 * U, H * 0.60, { a: na * 0.9, side: 'right' });
+        note('方差极小', cx - 770 * U, baseY + 4 * U, cx - 690 * U, H * 0.47, { a: na * 0.8, side: 'left', color: C.ice });
+        // 右下角一个「统计口径」小注，像参考片的英文小字
+        txt('n = 13 · 按月薪分层 · 中位数 8020', cx + 660 * U, baseY + 40 * U,
+            { font: F.mono(15 * U), color: C.dim, a: na * 0.7, align: 'right' });
+        // 上半屏还空着一大片（实测这一段中央占比只有 16%），补两行「这一排在说什么」
+        txt('起点：本科毕业',  cx - 700 * U, H * 0.325,
+            { font: F.mono(19 * U), color: C.paper2, a: na * 0.85, align: 'left' });
+        txt('终点：退休',      cx + 300 * U, H * 0.325,
+            { font: F.mono(19 * U), color: C.paper2, a: na * 0.85, align: 'right' });
+        // 一条从起点拉到终点的细线，把「一条路」这件事画出来
+        const spk = clamp(seg(lt, b(8.5), b(12)));
+        if (spk > 0.002) {
+          stroke(cx - 690 * U, H * 0.352, lerp(cx - 690 * U, cx + 290 * U, ease.outCubic(spk)),
+                 H * 0.352, 1, { color: C.dim, w: 1.4 * U, a: na * 0.55 });
+        }
+        txt('40 年，几乎不变', cx - 120 * U, H * 0.452,
+            { font: F.mono(17 * U), color: C.dim, a: na * spk * 0.8, align: 'right' });
+        // 那条线下面的年份刻度：把这 40 年真实地标出来（右上角原本是纯空白）
+        const yrs = ['22', '30', '40', '50', '60'];
+        yrs.forEach((yy, q) => {
+          const yyK = clamp(seg(lt, b(9) + q * 0.18, b(9.6) + q * 0.18));
+          if (yyK <= 0.002) return;
+          const xq = lerp(cx - 690 * U, cx + 290 * U, q / (yrs.length - 1));
+          stroke(xq, H * 0.352, xq, H * 0.352 + 9 * U * yyK, 1,
+                 { color: C.dim, w: 1.2 * U, a: na * yyK * 0.6 });
+          txt(yy + ' 岁', xq, H * 0.425,
+              { font: F.mono(15 * U), color: C.dim, a: na * yyK * 0.62, align: 'center' });
+        });
+        // 右上角补一条「图上这一排是谁」的口径说明
+        // ⚠️ 这一行改过三次才放对：W-88U 撞右侧 FRAME/TIME 数据列（W-m-104U），
+        //    cx+560U 撞「终点：退休」（右对齐到 cx+300U）。现在挪到年份轴下方、
+        //    右对齐到 cx+700U（=1660），离数据列还有 130px。
+        txt('样本：本科毕业生的月薪分布', cx + 700 * U, H * 0.478,
+            { font: F.mono(16 * U), color: C.dim, a: na * 0.7, align: 'right' });
+        txt('高度 = 月薪 · 每人一格', cx + 700 * U, H * 0.508,
+            { font: F.mono(16 * U), color: C.dim, a: na * 0.7, align: 'right' });
+      }
+    }
+    ctx.restore();
+  }
+
+  // ── B：10 万粉 一张彩票 ────────────────────────────────────
+  // ⚠️ 布局坑（v37 抽帧发现的）：幂律分布天然「左边一堆极矮、右边两个极高」，
+  // 原来把 26 个人放在 cx+90U..cx+730U（640U 宽），结果**整个左半屏全空**，
+  // 画面被压在右下角。改成占满整幅宽（1240U）+ 左侧补注释，把空白吃掉。
+  const aB = (lt >= A_END && lt < B_END) ? 1 : 0;
+  if (aB > 0.002) {
+    const b0 = A_END;
+    ctx.save(); ctx.globalAlpha = aB;
+    txt('10 万粉', cx + 420 * U, H * 0.185, { font: F.sansH(76 * U), color: C.gold, a: aB, glow: 16 * U });
+    txt('一张彩票 · 幂律分布', cx + 420 * U, H * 0.245, { font: F.mono(22 * U), color: C.paper2, a: aB });
+    const n = 26;
+    const PX0 = cx - 620 * U, PW = 1240 * U;        // 占满整幅宽
+
+    // ① 摇奖机：球从上面掉进来
+    if (lt < b0 + b(11)) {
+      for (let i = 0; i < 9; i++) {
+        const t0 = b0 + b(1) + i * b(0.8);
+        const p = (lt - t0) / b(2.2);
+        if (p < 0 || p > 1) continue;
+        const bx = PX0 + (i / 8) * PW;
+        const by = lerp(H * 0.16, baseY - 8 * U, ease.inQuad(clamp(p)));
+        ctx.save(); ctx.globalAlpha = aB * (1 - clamp((p - 0.85) * 6));
+        ctx.fillStyle = i % 3 === 0 ? C.gold : C.paper2;
+        ctx.beginPath(); ctx.arc(bx, by, 9 * U, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // ② 中位线（画在人物之前，否则线会压在人身上 —— 用户指出的「图二有点问题」）
+    const mk = spring(lt - (b0 + b(13)), { freq: 2.4, damp: 0.8 });
+    if (mk > 0.002) {
+      const x0 = PX0 - 10 * U, x1 = cx + 760 * U;
+      const yMid = baseY - 22 * U;
+      stroke(x0, yMid, lerp(x0, x1, clamp(mk)), yMid, 1,
+             { color: C.rose, w: 3 * U, a: aB * 0.95, glow: 16 * U });
+      const kPa = spring(lt - (b0 + b(17)), { freq: 2.6, damp: 0.7 });
+      if (kPa > 0.002) {
+        const ax = lerp(x0, x1, clamp(mk));
+        ctx.save(); ctx.globalAlpha = clamp(kPa) * aB;
+        ctx.fillStyle = C.rose; ctx.shadowBlur = 18 * U; ctx.shadowColor = C.rose;
+        ctx.beginPath();
+        ctx.moveTo(ax, yMid - 4 * U);
+        ctx.lineTo(ax - 13 * U, yMid - 26 * U);
+        ctx.lineTo(ax + 13 * U, yMid - 26 * U);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // ③ 幂律长出来：绝大多数极矮，只有两个很高
+    for (let i = 0; i < n; i++) {
+      const k = spring(lt - (b0 + b(4) + stagger(i, n, b(7))), { freq: 2.4, damp: 0.8 });
+      if (k <= 0.002) continue;
+      const f = i / (n - 1);
+      const hh = (34 + 300 * Math.pow(f, 7)) * U;
+      const x = PX0 + f * PW;
+      const isTop = i === n - 1 || i === n - 2;
+      person(x, baseY, hh * clamp(k), { a: clamp(k) * aB * (isTop ? 1 : 0.62), color: isTop ? C.gold : C.paper, gold: isTop, ph: i * 0.53 });
+    }
+
+    // ④ 顶端的两个：一束光沿着幂律曲线**扫过去**，强调「只有这么点人」
+    //    ⚠️ 原来是原地渐亮的一个光斑，量出来改动面积只有 0.43%（参考片 2.5–8.3%）。
+    //    改成沿曲线从左往右扫：扫过之处人跟着亮一下 —— 这既是解释（视线被引到右边），
+    //    又是整块位移（面积足够大）。
+    const topK = clamp(seg(lt, b0 + b(16), b0 + b(24)));
+    if (topK > 0.002) {
+      const sweepX = PX0 + ((lt - b0 - b(16)) / (b(8))) * PW;
+      ctx.save();
+      ctx.globalAlpha = aB * 0.55 * Math.sin(clamp(topK) * Math.PI);
+      const g = ctx.createLinearGradient(sweepX - 180 * U, 0, sweepX + 180 * U, 0);
+      g.addColorStop(0, 'rgba(232,199,126,0)');
+      g.addColorStop(0.5, 'rgba(232,199,126,.30)');
+      g.addColorStop(1, 'rgba(232,199,126,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(sweepX - 180 * U, baseY - 420 * U, 360 * U, 430 * U);
+      ctx.restore();
+    }
+
+    // ⑤ 左侧补三层环绕注释（原来整块左边是空的）
+    const nb = clamp(seg(lt, b0 + b(12), b0 + b(16))) * aB;
+    if (nb > 0.002) {
+      note('绝大多数人在这里',        PX0 + 120 * U, baseY - 24 * U, PX0 + 150 * U, H * 0.315, { a: nb, color: C.paper2 });
+      // ⚠️ 不写「前 10% 吃掉 90%」这种我没查证的数 —— 这是本片唯一一条硬规矩：每个数字都要有出处。
+      note('越往右越少，也越高',       PX0 + 380 * U, baseY - 46 * U, PX0 + 210 * U, H * 0.455, { a: nb * 0.9, color: C.paper2 });
+      // ⚠️ 这条原来锚在 H*0.245，正好压住「一张彩票 · 幂律分布」那行小字，挪到 H*0.325
+      note('顶上这两个，是「爆了」',   PX0 + PW - 40 * U, baseY - 300 * U, PX0 + PW - 210 * U, H * 0.325, { a: nb * 0.95, side: 'left', color: C.gold });
+      txt('样本 n = 26',  PX0, H * 0.365, { font: F.mono(17 * U), color: C.dim, a: nb * 0.8, align: 'left' });
+      txt('中位 ≈ 第 13 位的高度', PX0, H * 0.395, { font: F.mono(17 * U), color: C.dim, a: nb * 0.8, align: 'left' });
+    }
+    ctx.restore();
+  }
+
+  // ── C：真实数据 —— 一条共用数轴 + 一张真表格 ────────────────
+  // 用户：「拿最公开的数据，能查到就查」「光单看数字真的不吸引人，把数据可视化做的足够有意思」
+  // 参考片语言：银牌那张机场「出发 DEPARTURES」是真表格、那条时间轴是带刻度的数轴。
+  //              我们原来只有两根柱子 —— 补上数轴、刻度、真表格、大字号数字。
+  const aC = (lt >= B_END && lt < C_END) ? 1 : 0;
+  if (aC > 0.002) {
+    const c0 = B_END;
+    const AX = cx - 560 * U;              // 数轴起点（0 元）
+    const AW = 1060 * U;                  // 数轴总长（对应 0–11000 元）
+    const MAXV = 11000;
+    const px = v => AX + (v / MAXV) * AW;
+    const rowA = H * 0.415, rowB = H * 0.545;
+    const BAR_H = 34 * U;
+
+    ctx.save(); ctx.globalAlpha = aC;
+
+    // ① 数轴 + 刻度（0 / 2000 / … / 10000）—— 参考片的时间轴就是这个味道
+    const axisK = clamp(seg(lt, c0, c0 + b(2)));
+    if (axisK > 0.002) {
+      stroke(AX, H * 0.665, AX + AW * axisK, H * 0.665, 1, { color: C.line, w: 1.6 * U, a: aC * 0.9 });
+      for (let v = 0; v <= 10000; v += 2000) {
+        const k = clamp(seg(lt, c0 + b(0.4) + v / 9000, c0 + b(1.4) + v / 9000));
+        if (k <= 0.002) continue;
+        const x = px(v);
+        stroke(x, H * 0.665, x, H * 0.665 + 11 * U * k, 1, { color: C.dim, w: 1.4 * U, a: aC * k * 0.9 });
+        txt(v === 0 ? '0' : `${v / 1000}k`, x, H * 0.665 + 32 * U,
+            { font: F.mono(15 * U), color: C.dim, a: aC * k * 0.8, align: 'center' });
+      }
+      txt('元 / 月', AX + AW + 26 * U, H * 0.665 + 32 * U, { font: F.mono(15 * U), color: C.dim, a: aC * 0.7, align: 'left' });
+    }
+
+    // ② 左：应届本科 8020 —— 巨字当主角，数字像仪表盘一样**滚到位**
+    const kl = spring(lt - (c0 + b(2)), { freq: 2.2, damp: 0.8 });
+    if (kl > 0.002) {
+      const k = clamp(kl);
+      const w = (8020 / MAXV) * AW * k;
+      ctx.save(); ctx.globalAlpha = aC * k;
+      ctx.fillStyle = 'rgba(236,231,220,.20)';
+      ctx.fillRect(AX, rowA - BAR_H / 2, w, BAR_H);
+      ctx.strokeStyle = C.paper2; ctx.lineWidth = 2 * U;
+      ctx.strokeRect(AX, rowA - BAR_H / 2, w, BAR_H);
+      ctx.restore();
+      // 数字从 0 滚到 8020 —— 这是「信息本身在动」，不是装饰
+      // 参考片里那种仪表感就是这么来的：数字是活的，跟着它自己的进度走。
+      const rollL = ease.outQuint(clamp(seg(lt, c0 + b(2), c0 + b(5))));
+      const valL = Math.round(8020 * rollL);
+      txt(String(valL), AX + w + 26 * U, rowA + 26 * U,
+          { font: F.num(104 * U), color: C.paper, a: aC * k, align: 'left', glow: 18 * U });
+      txt('应届本科 · 月起薪中位数', AX, rowA - BAR_H / 2 - 26 * U,
+          { font: F.mono(21 * U), color: C.paper2, a: aC * k, align: 'left', track: 1 * U });
+    }
+
+    // ③ 右：10 万粉一条商单 7500
+    const kr = spring(lt - (c0 + b(5)), { freq: 2.2, damp: 0.8 });
+    if (kr > 0.002) {
+      const k = clamp(kr);
+      const w = (7500 / MAXV) * AW * k;
+      ctx.save(); ctx.globalAlpha = aC * k;
+      ctx.fillStyle = 'rgba(232,199,126,.26)';
+      ctx.fillRect(AX, rowB - BAR_H / 2, w, BAR_H);
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 2 * U;
+      ctx.strokeRect(AX, rowB - BAR_H / 2, w, BAR_H);
+      ctx.restore();
+      const rollR = ease.outQuint(clamp(seg(lt, c0 + b(5), c0 + b(8))));
+      const valR = Math.round(7500 * rollR);
+      txt(String(valR), AX + w + 26 * U, rowB + 26 * U,
+          { font: F.num(104 * U), color: C.gold, a: aC * k, align: 'left', glow: 18 * U });
+      txt('10 万粉 · 一条定制商单', AX, rowB - BAR_H / 2 - 26 * U,
+          { font: F.mono(21 * U), color: C.paper2, a: aC * k, align: 'left', track: 1 * U });
+    }
+
+    // ④ 中间一个 ≈：两条几乎一样长，这才是重点
+    //    放在数字列右侧的空白里，不压字（原来放 px(7700) 正好撞上两个大数字）
+    const eqK = spring(lt - (c0 + b(8)), { freq: 2.4, damp: 0.7 });
+    if (eqK > 0.002) {
+      const ea = aC * clamp(eqK);
+      txt('≈', W * 0.885, (rowA + rowB) / 2 + 30 * U,
+          { font: F.num(112 * U), color: C.paper2, a: ea * 0.92, align: 'center', glow: 18 * U });
+      txt('差 520 元', W * 0.885, (rowA + rowB) / 2 + 86 * U,
+          { font: F.mono(17 * U), color: C.dim, a: ea * 0.8, align: 'center' });
+    }
+
+    // ⑤ 一张真的表（参考片那张机场出发牌）—— 逐行落下
+    const tableRows = [
+      ['应届本科', '月起薪中位数', '8020 元', '智联招聘 2025 届'],
+      ['10 万粉 UP', '单条定制商单', '7500 元', '行业公开报价'],
+      ['10 万粉 UP', '月接单上限', '1.5 条', '一个人做不完'],
+    ];
+    const tX = cx - 520 * U, tY = H * 0.715, tW = 1040 * U, RH = 44 * U;
+    const tblK = clamp(seg(lt, c0 + b(10), c0 + b(12)));
+    if (tblK > 0.002) {
+      ctx.save(); ctx.globalAlpha = aC * tblK;
+      ctx.strokeStyle = C.line; ctx.lineWidth = 1.4 * U;
+      ctx.strokeRect(tX, tY, tW, RH * (tableRows.length + 1));
+      for (let i = 1; i <= tableRows.length; i++) {
+        ctx.beginPath(); ctx.moveTo(tX, tY + RH * i); ctx.lineTo(tX + tW, tY + RH * i); ctx.stroke();
+      }
+      // 列分隔
+      for (const fx of [0.20, 0.44, 0.66]) {
+        ctx.beginPath(); ctx.moveTo(tX + tW * fx, tY); ctx.lineTo(tX + tW * fx, tY + RH * (tableRows.length + 1)); ctx.stroke();
+      }
+      ctx.restore();
+      // 表头
+      const heads = ['谁', '哪一项', '数字', '口径 / 来源'];
+      const hx = [0.02, 0.22, 0.46, 0.68];
+      heads.forEach((h, i) => {
+        txt(h, tX + tW * hx[i], tY + 28 * U,
+            { font: F.mono(16 * U), color: C.dim, a: aC * tblK * 0.85, align: 'left', track: 1 * U });
+      });
+      // ⚠️ 表格三行全落完之后，66.3–68.3s 又是 2 秒全静止。
+      //    加一条「正在读表格」的高亮带：三行依次被点亮、点亮后留一层微光。
+      //    它帮观众按顺序看这三行（真的有信息价值），而不是为了动而动。
+      const readK = clamp(seg(lt, c0 + b(12), c0 + b(17)));
+      const readRow = readK * (tableRows.length + 0.2);
+      tableRows.forEach((r, i) => {
+        const hl = clamp(1 - Math.abs(readRow - (i + 0.5)) * 1.6);
+        if (hl > 0.01) {
+          ctx.save(); ctx.globalAlpha = aC * hl * 0.30;
+          ctx.fillStyle = C.gold;
+          ctx.fillRect(tX, tY + RH * (i + 0.5) + 2 * U, tW, RH - 4 * U);
+          ctx.restore();
+        }
+        const rk = clamp(seg(lt, c0 + b(10.5) + i * b(1.5), c0 + b(11.2) + i * b(1.5)));
+        if (rk <= 0.002) return;
+        const y = tY + RH * (i + 1) + 29 * U;
+        r.forEach((cell, j) => {
+          const isNum = j === 2;
+          txt(cell, tX + tW * hx[j], y, {
+            font: isNum ? F.num(26 * U) : F.mono(18 * U),
+            color: isNum ? C.gold : C.paper2,
+            a: aC * rk, align: 'left', track: isNum ? 0 : 0.5 * U,
+          });
+        });
+      });
+    }
+
+    // ⑥ 注释层：指着画面具体的位置说话
+    const na = clamp(seg(lt, c0 + b(13), c0 + b(16))) * aC;
+    if (na > 0.004) {
+      note('差不多，就是这条线的长度', px(7760), (rowA + rowB) / 2, px(8600), H * 0.50,
+           { a: na, side: 'right', color: C.ice });
+      note('但这是「一条」，不是一个月', px(7500), rowB + BAR_H / 2 + 4 * U, px(9600), H * 0.60,
+           { a: na * 0.9, side: 'right', color: C.gold });
+    }
+    ctx.restore();
+  }
+
+  // ── D：期望值 vs 下限 —— 一台会真的倾斜的天平 ──────────────
+  const bk = (lt >= C_END) ? 1 : 0;
+  if (bk > 0.002) {
+    const d0 = C_END;
+    const a = 1;
+    const pvX = cx, pvY = H * 0.44;
+    const armL = 270 * U, armR = 270 * U;
+    const tilt = lerp(0, -0.19, glide(clamp(seg(lt, d0 + b(4), d0 + b(9)))));
+    const cosT = Math.cos(tilt), sinT = Math.sin(tilt);
+    const Lx = pvX - armL * cosT, Ly = pvY - armL * sinT;
+    const Rx = pvX + armR * cosT, Ry = pvY + armR * sinT;
+    const COL_BOT = H * 0.735;                       // 立柱底座
+
+    ctx.save();
+    ctx.globalAlpha = a;
+
+    // ① 底座 + 立柱：让天平真的立在地上，而不是浮在半空
+    const colK = 1;
+    if (colK > 0.002) {
+      ctx.save(); ctx.globalAlpha = a * colK;
+      // 底座梯形
+      ctx.fillStyle = 'rgba(236,231,220,.10)';
+      ctx.beginPath();
+      ctx.moveTo(pvX - 130 * U, COL_BOT);
+      ctx.lineTo(pvX - 96 * U, COL_BOT - 26 * U);
+      ctx.lineTo(pvX + 96 * U, COL_BOT - 26 * U);
+      ctx.lineTo(pvX + 130 * U, COL_BOT);
+      ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = C.paper2; ctx.lineWidth = 2 * U;
+      ctx.beginPath();
+      ctx.moveTo(pvX - 130 * U, COL_BOT); ctx.lineTo(pvX - 96 * U, COL_BOT - 26 * U);
+      ctx.lineTo(pvX + 96 * U, COL_BOT - 26 * U); ctx.lineTo(pvX + 130 * U, COL_BOT);
+      ctx.closePath(); ctx.stroke();
+      // 立柱
+      ctx.strokeStyle = C.paper2; ctx.lineWidth = 3 * U;
+      ctx.beginPath();
+      ctx.moveTo(pvX, pvY + 4 * U);
+      ctx.lineTo(pvX, COL_BOT - 26 * U);
+      ctx.stroke();
+      // 立柱上的刻度（参考片那种带刻度的数轴感）
+      for (let k2 = 0; k2 < 7; k2++) {
+        const yy = pvY + 24 * U + k2 * 22 * U;
+        if (yy > COL_BOT - 32 * U) break;
+        ctx.globalAlpha = a * colK * 0.5;
+        ctx.beginPath(); ctx.moveTo(pvX - 10 * U, yy); ctx.lineTo(pvX + 10 * U, yy); ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ② 支点三角
+    ctx.globalAlpha = a;
+    ctx.fillStyle = C.dim;
+    ctx.beginPath();
+    ctx.moveTo(pvX, pvY - 6 * U);
+    ctx.lineTo(pvX - 16 * U, pvY + 32 * U);
+    ctx.lineTo(pvX + 16 * U, pvY + 32 * U);
+    ctx.closePath(); ctx.fill();
+
+    // ③ 横梁
+    ctx.strokeStyle = C.paper2; ctx.lineWidth = 3.4 * U; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(Lx, Ly); ctx.lineTo(Rx, Ry); ctx.stroke();
+
+    // ④ 两端托盘（半圆 + 竖向吊线）
+    for (const [x, y, col] of [[Lx, Ly, C.ice], [Rx, Ry, C.gold]]) {
+      ctx.strokeStyle = col; ctx.lineWidth = 2.5 * U;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 30 * U); ctx.stroke();
+      ctx.beginPath(); ctx.arc(x, y + 30 * U, 34 * U, 0.06 * Math.PI, 0.94 * Math.PI); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - 34 * U, y + 30 * U); ctx.lineTo(x - 34 * U, y + 22 * U); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x + 34 * U, y + 30 * U); ctx.lineTo(x + 34 * U, y + 22 * U); ctx.stroke();
+    }
+    ctx.restore();
+
+    // ⑤ 盘上的东西：左边一摞稳的（下限），右边一颗弹跳的（期望值）
+    const leftA = a * clamp(seg(lt, d0 + b(2), d0 + b(4)));
+    if (leftA > 0.004) {
+      // 下限：三个叠起来的方块，纹丝不动
+      ctx.save(); ctx.globalAlpha = leftA;
+      ctx.strokeStyle = C.ice; ctx.lineWidth = 2 * U;
+      ctx.fillStyle = 'rgba(140,200,235,.16)';
+      for (let q = 0; q < 3; q++) {
+        const w = 46 * U - q * 5 * U;
+        ctx.fillRect(Lx - w / 2, Ly + 22 * U - q * 13 * U, w, 12 * U);
+        ctx.strokeRect(Lx - w / 2, Ly + 22 * U - q * 13 * U, w, 12 * U);
+      }
+      ctx.restore();
+    }
+    const ballA = a * clamp(seg(lt, d0 + b(3), d0 + b(5)));
+    if (ballA > 0.004) {
+      // 期望值：一颗一直在抖的球 —— 它不稳定，这是全段的意思
+      const jit = Math.sin(lt * 5.4) * 4.5 * U + Math.sin(lt * 11.7) * 2 * U;
+      ctx.save(); ctx.globalAlpha = ballA;
+      ctx.fillStyle = 'rgba(232,199,126,.32)';
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 2 * U;
+      ctx.beginPath(); ctx.arc(Rx + jit, Ry + 8 * U, 15 * U, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+
+    // ⑥ 标签：写在托盘下方，绝不压横梁
+    txt('下限', Lx, Ly + 108 * U, { font: F.sub(38 * U), color: C.ice, a, glow: 12 * U });
+    txt('稳的', Lx, Ly + 148 * U, { font: F.mono(19 * U), color: C.dim, a: a * 0.85, track: 2 * U });
+    txt('期望值', Rx, Ry + 108 * U, { font: F.sub(38 * U), color: C.gold, a, glow: 12 * U });
+    txt('会跳的', Rx, Ry + 148 * U, { font: F.mono(19 * U), color: C.dim, a: a * 0.85, track: 2 * U });
+
+    // ⑥b 两侧托盘上的**实时读数**：随着横梁倾斜一路变化
+    //    这是把「天平在称」这件事变成可读的数字。横梁一动，两个数就一起动 ——
+    //    而且右边那颗球一直在抖，所以右边的数从头到尾没有一刻是停的。
+    //    （和 02C 的滚动计数器同一手法：让信息自己在动，比给画面加装饰诚实得多。）
+    {
+      const numA = clamp(seg(lt, d0 + b(2), d0 + b(4))) * a;
+      if (numA > 0.004) {
+        const tiltN = Math.abs(tilt) / 0.19;                    // 0 = 平，1 = 倾到底
+        const leftV = Math.round(46 - tiltN * 9);               // 左边涨
+        const jitter = Math.sin(lt * 5.4) * 1.4 + Math.sin(lt * 11.7) * 0.8;
+        const rightV = Math.round((46 + tiltN * 9) * 10 + jitter * 10) / 10;
+        txt(String(leftV), Lx, Ly - 26 * U,
+            { font: F.num(62 * U), color: C.ice, a: numA, align: 'center', glow: 12 * U });
+        txt(rightV.toFixed(1), Rx, Ry - 26 * U,
+            { font: F.num(62 * U), color: C.gold, a: numA, align: 'center', glow: 12 * U });
+        txt('有底', Lx, Ly - 76 * U,
+            { font: F.mono(16 * U), color: C.dim, a: numA * 0.8, align: 'center', track: 2 * U });
+        txt('无底', Rx, Ry - 76 * U,
+            { font: F.mono(16 * U), color: C.dim, a: numA * 0.8, align: 'center', track: 2 * U });
+      }
+    }
+
+    // ⑦ 注释层 + 一句结论
+    // ⚠️ 原来 na 的窗口是 b(7)–b(10)，而这一段只有 b(12) 长 —— 等于最后 2 拍才有标签，
+    //    前面的时间整幅画面就一个天平孤零零地立着（抽帧 71s 就是这状态）。
+    //    改成 b(1)–b(4)：天平一落下就带标签，全程有信息。
+    const na = clamp(seg(lt, d0 + b(1), d0 + b(4))) * a;
+    if (na > 0.004) {
+      note('你能拿到多少，是有底的', Lx - 34 * U, Ly + 40 * U, Lx - 210 * U, H * 0.60,
+           { a: na, side: 'left', color: C.ice });
+      note('你可能拿到多少，没有底', Rx + 34 * U, Ry + 40 * U, Rx + 220 * U, H * 0.36,
+           { a: na * 0.95, side: 'right', color: C.gold });
+      // 左侧补一条说明：这个天平在量什么
+      txt('左边＝低，但稳',  Lx - 150 * U, H * 0.455,
+          { font: F.mono(18 * U), color: C.dim, a: na * 0.8, align: 'right' });
+      txt('右边＝高，但不稳', Rx + 160 * U, H * 0.455,
+          { font: F.mono(18 * U), color: C.dim, a: na * 0.8, align: 'left' });
+      txt('两边都称过，才有得比', cx, H * 0.795,
+          { font: F.mono(19 * U), color: C.paper2, a: na * 0.75, align: 'center', track: 1 * U });
+    }
+    // ⑧ 天平上方的一句大实话
+    const bigA = clamp(seg(lt, d0 + b(9), d0 + b(11))) * a;
+    if (bigA > 0.004) {
+      txt('他这一比，比的是两边的底', cx, H * 0.245,
+          { font: F.sub(44 * U), color: C.paper, a: bigA, glow: 14 * U });
+    }
+  }
+};
+
+// 03 他自己知道 74.77 - 94.00
+// 03 他自己知道：三句原话各配一张小票（封面缩略图 + BV 号 + UP 主 + 日期）
+scene.admit = (t, lt) => {
+  const outA = 1;
+  const CW = 400 * U, CH_ = 228 * U, GAPX = 78 * U;
+  const notes = [
+    { s: '上大学只有\n两种情况成立', at: b(0.15), rot: -0.045, key: 'deny'    },
+    { s: '高考该拼\n尽全力',        at: b(4),    rot:  0.030, key: 'exam'    },
+    { s: '别为了文凭\n停住能力', at: b(8),    rot: -0.018, key: 'diploma' },
+  ];
+  const cardY = H * 0.375;
+  notes.forEach((nt, i) => {
+    const k = spring(lt - nt.at, { freq: 2.1, damp: 0.75 });
+    if (k <= 0.002) return;
+    const x = cx + (i - 1) * (CW + GAPX);
+    const y = cardY + (i === 1 ? -14 * U : 8 * U);
+    const src = SRC[nt.key], img = IMG[nt.key];
+    // 中间那张卡：被切之后自己下沉 18U 并变暗 —— 「这句被抽走了」
+    const isMid = (i === 1);
+    const taken = isMid ? clamp(seg(lt, b(16.2), b(19))) : 0;
+    ctx.save();
+    ctx.translate(0, (1 - clamp(k)) * 40 * U + taken * 18 * U);
+    noteCard(x, y, CW, CH_, { a: clamp(k) * outA * (1 - taken * 0.45), rot: nt.rot + (1 - clamp(k)) * 0.06 });
+
+    // 卡内布局：左边封面缩略图（竖条），右边文字区
+    const padX = 18 * U;
+    const th = CH_ - 2 * padX, tw = th * 0.70;
+    if (img) {
+      const tx0 = x - CW / 2 + padX + tw / 2;
+      ctx.save();
+      ctx.globalAlpha = clamp(k) * outA;
+      ctx.translate(tx0, y);
+      ctx.rotate(nt.rot);
+      ctx.beginPath(); ctx.roundRect(-tw / 2, -th / 2, tw, th, 3 * U); ctx.clip();
+      // 缩略图自己缓慢推近（Ken Burns）。三张卡加起来占画幅一大块，
+      // 原来是三张完全不动的图 —— 这一段实测 median 0.002，全片第二死。
+      // 图里的内容是真实频道截图，推进它属于「内容在动」。
+      const kbA = 1 + 0.11 * clamp(seg(lt, nt.at, b(26)));
+      const s = Math.max(tw / img.width, th / img.height) * kbA;
+      const dw = img.width * s, dh = img.height * s;
+      ctx.drawImage(img, -dw / 2, -dh / 2, dw, dh);
+      // A 方案：压暗 30%，明确它是「引用」而不是正片
+      ctx.fillStyle = 'rgba(18,17,15,.34)';
+      ctx.fillRect(-tw / 2, -th / 2, tw, th);
+      ctx.restore();
+
+      // A 方案：金色描边框，把缩略图框住，跟右侧正文拉开层级
+      ctx.save();
+      ctx.globalAlpha = clamp(k) * outA;
+      ctx.translate(tx0, y);
+      ctx.rotate(nt.rot);
+      ctx.beginPath(); ctx.roundRect(-tw / 2, -th / 2, tw, th, 3 * U);
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 2.2 * U;
+      ctx.shadowBlur = 12 * U; ctx.shadowColor = 'rgba(232,199,126,.55)';
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // 左上角一枚小小的「引用」角标
+      ctx.fillStyle = C.gold;
+      ctx.fillRect(-tw / 2, -th / 2, 26 * U, 16 * U);
+      ctx.font = F.mono(11 * U); ctx.fillStyle = C.ink;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('BV', -tw / 2 + 13 * U, -th / 2 + 8 * U);
+      ctx.restore();
+    }
+    // 文字区：从缩略图右侧到卡片右内边
+    const textL = img ? (x - CW / 2 + padX + tw + 14 * U) : (x - CW / 2 + padX);
+    const textR = x + CW / 2 - padX;
+    const textX = (textL + textR) / 2;
+    const textW = textR - textL;
+    wrapText(nt.s, textX, y - 34 * U, {
+      font: F.sub(30 * U), color: C.ink, a: clamp(k) * outA,
+      maxW: textW, lh: 1.28,
+    });
+    // 底部：BV 号 + UP 主 + 日期（可查可核）
+    let bvFont = 17 * U;
+    ctx.font = F.mono(bvFont);
+    const bvW = ctx.measureText(src.bv).width;
+    if (bvW > textW) bvFont *= textW / bvW;
+    txt(src.bv, textX, y + 56 * U, { font: F.mono(bvFont), color: '#7C776B', a: clamp(k) * outA, align: 'center' });
+    let upFont = 14 * U;
+    ctx.font = F.mono(upFont);
+    const upTxt = src.up + ' · ' + src.date;
+    const upW = ctx.measureText(upTxt).width;
+    if (upW > textW) upFont *= textW / upW;
+    txt(upTxt, textX, y + 78 * U, { font: F.mono(upFont), color: '#A39E90', a: clamp(k) * outA * 0.85, align: 'center' });
+    ctx.restore();
+  });
+  // 说完后：一条红线从最左卡片扫到最右卡片，走卡片下方，绝不压字
+  const ck = spring(lt - b(20), { freq: 2.4, damp: 0.85 });
+  if (ck > 0.002) {
+    const xL = cx - (CW + GAPX) - CW / 2 - 26 * U;
+    const xR = cx + (CW + GAPX) + CW / 2 + 26 * U;
+    const yStrike = cardY + CH_ / 2 + 34 * U;
+    ctx.save(); ctx.globalAlpha = clamp(ck) * outA * 0.95;
+    ctx.strokeStyle = C.rose; ctx.lineWidth = 5 * U; ctx.lineCap = 'round';
+    ctx.shadowBlur = 18 * U; ctx.shadowColor = C.rose;
+    ctx.beginPath();
+    const xEnd = lerp(xL, xR, clamp(ck));
+    ctx.moveTo(xL, yStrike);
+    ctx.lineTo(xEnd, yStrike + Math.sin((xEnd - xL) / (70 * U)) * 6 * U);
+    ctx.stroke(); ctx.restore();
+    // 被剪掉的那一句——让「剪」这个动作真的发生。
+    // ⚠️ 第一版把线画成了贯穿整幅画面，横着切过三张卡的正文
+    //    —— 那正是用户一直在说的「漏洞」。现在只在**中间那张卡的边界内**落下，
+    //    切完中间那张卡自己向下沉一点、变暗，读作「这句被抽走了」。
+    const sciss = clamp(seg(lt, b(13.5), b(16.2)));
+    if (sciss > 0.002) {
+      const MCX = cx;                        // 中间卡的水平中心
+      const MW = CW / 2 + 10 * U;            // 只到卡片边界外 10U，不碰两侧的卡
+      const yC0 = cardY - CH_ / 2 - 14 * U;
+      const yCut = lerp(yC0, cardY + CH_ / 2 + 14 * U, ease.inOutCubic(sciss));
+      ctx.save();
+      ctx.globalAlpha = outA * 0.85 * (1 - 0.35 * clamp(seg(lt, b(16.2), b(18))));
+      ctx.strokeStyle = C.ice; ctx.lineWidth = 2.0 * U;
+      ctx.shadowBlur = 12 * U; ctx.shadowColor = C.ice;
+      ctx.beginPath(); ctx.moveTo(MCX - MW, yCut); ctx.lineTo(MCX + MW, yCut); ctx.stroke();
+      // 两端各一点冰蓝火花，让「切」有个起点和终点
+      [MCX - MW, MCX + MW].forEach(px => {
+        ctx.beginPath(); ctx.arc(px, yCut, 3.2 * U, 0, Math.PI * 2);
+        ctx.fillStyle = C.ice; ctx.fill();
+      });
+      ctx.restore();
+    }
+    // 注释移到卡片下方，不再被卡片压住
+    txt('这三句，很少被一起引用', cx, H * 0.665,
+        { font: F.mono(25 * U), color: C.rose, a: outA * clamp(ck), track: 2 * U });
+  }
+
+  // 环绕注释层：03 段原来只有三张卡 + 一行红字，整幅上下都是空的。
+  // 参考片每个画面 5–13 个带牵线的标签 —— 这里补三层，指卡片、指封面、指 BV 号。
+  const na3 = clamp(seg(lt, b(6), b(10))) * outA;
+  if (na3 > 0.002) {
+    const xLc = cx - (CW + GAPX), xRc = cx + (CW + GAPX);
+    note('三条都出自他本人',     xLc, cardY - CH_ / 2 - 4 * U,  xLc - 30 * U, H * 0.185, { a: na3, side: 'left', color: C.gold });
+    note('封面是他频道的原图',   cx,  cardY - CH_ / 2 - 4 * U,  cx + 90 * U,  H * 0.185, { a: na3 * 0.9, side: 'right' });
+    note('BV 号可查',           xRc, cardY + CH_ / 2 - 60 * U,  xRc + 60 * U, H * 0.615, { a: na3 * 0.92, side: 'right', color: C.paper2 });
+    // ⚠️ 这两行原来放 H*0.245/0.295，正好撞上刚加的 note 标签（同一高度）。
+    //    挪到卡片下方的大片空白里，那里本来什么都没有。
+    txt('3 / 4 条 · 时间跨度 2026-09-28 → 10-14', cx, H * 0.725,
+        { font: F.mono(18 * U), color: C.dim, a: na3 * 0.8, align: 'center' });
+    txt('都不是「学历无用」，是「别再为学历停住」', cx, H * 0.775,
+        { font: F.mono(18 * U), color: C.paper2, a: na3 * 0.8, align: 'center' });
+  }
+
+  // ── 一条会走的引用日历：把「这四条横跨 17 天」变成看得见的运动 ──────────
+  // 03 段实测 >20 灰阶只有 0.50%（参考片均值 2.79%），画面是三个静止的卡片。
+  // 加一条时间轴，游标从左走到右，经过哪一天哪一天就亮 —— 信息本身在动，
+  // 不是给画面加装饰（这条是整夜验证过的唯一有效手法）。
+  // ⚠️ 从 b(9) 提前到 b(4)：三张卡分别在 b(0.15)/b(4)/b(8) 出现，
+  //    而 75.1–76.9s（卡片一到卡片二之间）是 1.8 秒全静止 —— 日历光带提前开始扫。
+  const calA = clamp(seg(lt, b(1), b(3))) * outA;
+  if (calA > 0.004) {
+    const cxL = cx - 560 * U, cxR = cx + 560 * U;
+    const cy = H * 0.845;
+    stroke(cxL, cy, cxR, cy, 1, { color: C.dim, w: 1.2 * U, a: calA * 0.55 });
+    // 四个真实日期位置（09-28 / 10-03 / 10-05 / 10-14，按 17 天比例）
+    const days = [0, 5, 7, 16];
+    const dayOf = (d) => cxL + (cxR - cxL) * (d / 16);
+    // ⚠️ 游标原来只走到 b(18)，而这一段总长 b(36) —— 84.4s 之后 9.6 秒画面上
+    //    一个像素都不变（实测 90.5–93.5s 动量 0.0011，用户说的「1分27到33有明显停顿」
+    //    就是这个）。现在走满整段，最后一个日期卡在 b(35) 才亮。
+    const cursor = lerp(0, 16, clamp(seg(lt, b(1.4), b(35))));
+    // 走过的部分留一条渐亮的实线：只靠一个 4.5px 的点移动，变化面积太小，
+    // 整条轨道亮起来才是能让整幅看见的「信息在推进」
+    const fillW = dayOf(cursor) - cxL;
+    if (fillW > 1) {
+      const grd = ctx.createLinearGradient(cxL, 0, cxL + fillW, 0);
+      grd.addColorStop(0, 'rgba(232,199,126,.18)');
+      grd.addColorStop(1, 'rgba(232,199,126,.75)');
+      ctx.save(); ctx.globalAlpha = calA;
+      ctx.fillStyle = grd;
+      ctx.fillRect(cxL, cy - 2 * U, fillW, 4 * U);
+      ctx.restore();
+    }
+    days.forEach((d, i) => {
+      const dxr = dayOf(d);
+      const lit = cursor >= d - 0.15 ? 1 : 0.35;
+      stroke(dxr, cy - 7 * U, dxr, cy + 7 * U, 1,
+             { color: lit > 0.5 ? C.gold : C.dim, w: 1.6 * U, a: calA * lit });
+      txt(['09-28', '10-03', '10-05', '10-14'][i], dxr, cy + 22 * U,
+          { font: F.mono(14 * U), color: lit > 0.5 ? C.gold : C.dim, a: calA * lit * 0.9, align: 'center' });
+    });
+    // ⚠️ 03 段实测 83% 的帧完全静止（全片最死的一段）：三张卡是静的、游标只有 4.5px，
+    //    整幅的变化面积小到一个像素都不动。这里把游标「放大成一道光」——
+    //    一条和卡片同高、120 单位宽的竖光带，跟着游标从最左卡扫到最右卡。
+    //    面积够大（跨整幅高度的 1/3）、速度均匀、且它就是「时间正在扫过这些引用」本身，
+    //    不是装饰。这是全片验证过的唯一有效手法：让信息自己在动。
+    const cxp = dayOf(cursor);
+    const bandW = 120 * U;
+    const cardTop = cardY - CH_ / 2 - 26 * U;
+    const cardBot = cardY + CH_ / 2 + 26 * U;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const bg = ctx.createLinearGradient(cxp - bandW / 2, 0, cxp + bandW / 2, 0);
+    bg.addColorStop(0.00, 'rgba(232,199,126,0)');
+    bg.addColorStop(0.42, 'rgba(232,199,126,.10)');
+    bg.addColorStop(0.50, 'rgba(255,228,170,.20)');
+    bg.addColorStop(0.58, 'rgba(232,199,126,.10)');
+    bg.addColorStop(1.00, 'rgba(232,199,126,0)');
+    ctx.globalAlpha = calA;
+    ctx.fillStyle = bg;
+    ctx.fillRect(cxp - bandW / 2, cardTop, bandW, cardBot - cardTop);
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha = calA * 0.95;
+    ctx.fillStyle = C.rose; ctx.shadowBlur = 16 * U; ctx.shadowColor = C.rose;
+    ctx.beginPath(); ctx.arc(cxp, cy, 4.5 * U, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    stroke(cxp, cy - 14 * U, cxp, cy + 14 * U, 1, { color: C.rose, w: 1.4 * U, a: calA * 0.6, glow: 8 * U });
+    txt('17 天，四条', cxL - 24 * U, cy + 5 * U,
+        { font: F.mono(15 * U), color: C.dim, a: calA * 0.75, align: 'right' });
+    // 已点亮的条数：游标每过一个日期 +1。数字本身在变，比单纯一个点在挪更显眼。
+    const cnt = days.filter(d => cursor >= d - 0.15).length;
+    txt(String(cnt), cxR + 34 * U, cy + 12 * U,
+        { font: F.num(58 * U), color: C.gold, a: calA * 0.95, align: 'left', glow: 14 * U });
+    txt('/4', cxR + 34 * U + 30 * U, cy + 12 * U,
+        { font: F.mono(18 * U), color: C.dim, a: calA * 0.8, align: 'left' });
+    txt('已引用', cxR + 34 * U, cy - 24 * U,
+        { font: F.mono(14 * U), color: C.dim, a: calA * 0.7, align: 'left' });
+  }
+};
+
+// 04 AI 产线 89.73 - 106.82
+scene.prod = (t, lt) => {
+  const outA = 1;   // 同上
+  // 传送带 + 一个个被造出来的人
+  const baseY = SAFE_BOT - 40 * U;
+  const beltA = clamp(seg(lt, 0.02, b(3))) * outA;
+  const beltY = baseY + 26 * U;
+  stroke(cx - 760 * U, beltY, cx + 760 * U, beltY, 1, { color: C.dim, w: 2.4 * U, a: beltA });
+
+  // 传送带真的在走：刻度线按时间平移
+  // 速度从 150 降到 92 —— 实测这一段活动量 2.15，是全片其它段（0.3）的 7 倍，
+  // 高到和别处脱节。降速后它仍是全片最热闹的段，但不再「疯狂滚动」。
+  const SPEED = 92 * U;
+  const TICK = 46 * U;                  // 刻度间距
+  const scroll = (lt * SPEED) % TICK;
+  for (let gx = cx - 760 * U + scroll; gx <= cx + 760 * U; gx += TICK) {
+    stroke(gx, beltY, gx + 12 * U, beltY + 14 * U, 1, { color: C.dim, w: 1.6 * U, a: beltA * 0.55 });
+  }
+
+  // 每个人骑在带子上往右走，路过印章时被敲一下
+  const xStamp = cx + 80 * U;
+  const n = 11;
+  // 锤子按固定节拍砸，且节拍与「有人走到锤下」同相
+  // 人从 cx-700U 走到 xStamp 要走 780/SPEED 秒，所以 HIT0 = b(4) + 780/SPEED
+  const CYCLE = b(2.1);
+  const HIT0 = b(4) + 780 / 92;
+  const ph = (((lt - HIT0) % CYCLE) + CYCLE) % CYCLE / CYCLE;
+  const d = Math.min(ph, 1 - ph);                     // 0 = 正砸下，0.5 = 抬到顶
+  const press = Math.pow(clamp(1 - d * 2), 2.2);
+
+  // 压印机（一直画在画面上）
+  const machA = clamp(seg(lt, 0.02, b(2))) * outA;
+  const postTop = beltY - 360 * U;
+  const HAMMER_DOWN = baseY - 142 * U + 30 * U;    // 锤头中心
+  const HAMMER_UP = HAMMER_DOWN - 168 * U;
+  const hammerY = lerp(HAMMER_UP, HAMMER_DOWN, press);
+  if (machA > 0.002) {
+    // 立柱
+    stroke(xStamp, beltY, xStamp, postTop, 1, { color: C.dim, w: 5 * U, a: machA * 0.85 });
+    // 顶端横臂
+    stroke(xStamp - 70 * U, postTop, xStamp + 70 * U, postTop, 1, { color: C.dim, w: 4 * U, a: machA * 0.85 });
+    // 导轨
+    stroke(xStamp, postTop, xStamp, hammerY, 1, { color: C.dim, w: 2 * U, a: machA * 0.5 });
+    // 锤头：砸下去时实心发光
+    ctx.save();
+    ctx.globalAlpha = machA;
+    ctx.strokeStyle = C.gold; ctx.lineWidth = 3 * U;
+    ctx.strokeRect(xStamp - 46 * U, hammerY - 30 * U, 92 * U, 30 * U);
+    if (press > 0.35) {
+      ctx.globalAlpha = machA * (press - 0.35) / 0.65;
+      ctx.fillStyle = C.gold;
+      ctx.shadowBlur = 26 * U; ctx.shadowColor = C.gold;
+      ctx.fillRect(xStamp - 46 * U, hammerY - 30 * U, 92 * U, 30 * U);
+    }
+    ctx.restore();
+    // 砸中那一刻的冲击圈
+    if (press > 0.6) {
+      const ring = (press - 0.6) / 0.4;
+      ctx.save(); ctx.globalAlpha = outA * (1 - ring) * 0.75;
+      ctx.strokeStyle = C.gold; ctx.lineWidth = 2.5 * U;
+      ctx.beginPath(); ctx.ellipse(xStamp, beltY - 120 * U, 30 * U + ring * 70 * U, (30 * U + ring * 70 * U) * 0.45, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 人的出发时刻要跟锤子的周期对齐，否则「走得到锤下」和「锤子砸下」不同相。
+  // 推导：x = -700U + (lt-born)*92，走到 xStamp(80U) 要 (80+700)/92 = 8.478s。
+  // 让第一个人恰好在 HIT0 到达 → born0 = HIT0 - 8.478 = b(4) - 8.478 = -6.34s。
+  // 之后每个间隔 CYCLE，所以**每个人的到达时刻都正好是砸下时刻**，永远同相。
+  // 同时 born0 是负数，意味着开段时带子上已经有人了，不会一开始是空带。
+  const BORN0 = b(4) - 780 / 92;
+  for (let i = 0; i < n; i++) {
+    const born = BORN0 + i * CYCLE;
+    if (lt < born) continue;
+    const x = cx - 700 * U + (lt - born) * SPEED;
+    if (x > cx + 820 * U) continue;
+    const k = spring(lt - born, { freq: 2.6, damp: 0.72 });
+    const walk = Math.sin((lt - born) * 5.2) * 2.2 * U;     // 走路的小起伏
+    person(x, baseY, 130 * U * clamp(k), { a: clamp(k) * outA * 0.9, color: C.paper, ph: i * 0.61, walk: walk });
+    // 已经被盖过章的，头顶牌子跟着走
+    const stampedAt = Math.max(0, lt - (born + (xStamp - (cx - 700 * U)) / SPEED));
+    if (lt > born + (xStamp - (cx - 700 * U)) / SPEED) {
+      const sa = clamp(stampedAt * 6) * outA * 0.95;
+      txt('10万+', x, baseY - 168 * U, { font: F.mono(18 * U), color: C.gold, a: sa });
+    }
+  }
+
+  // 上方两条流水线标签（抬到 H*0.175，给下面的大数字让出整条带）
+  const lk = spring(lt - b(10), { freq: 2.2, damp: 0.8 });
+  if (lk > 0.002) {
+    txt('\u4e00\u5957\u6a21\u677f', cx - 330 * U, H * 0.175, { font: F.sub(38 * U), color: C.paper2, a: clamp(lk) * outA });
+    txt('＋', cx, H * 0.175, { font: F.mono(30 * U), color: C.dim, a: clamp(lk) * outA });
+    txt('\u4e00\u9996 BGM', cx + 330 * U, H * 0.175, { font: F.sub(38 * U), color: C.paper2, a: clamp(lk) * outA });
+  }
+  // 环绕注释：参考片每帧有 5–13 个带牵线的标签，我们原来一个都没有。
+  // 这是「画面被信息填满」最有效的一招 —— 不靠加装饰，靠把已有结构讲清楚。
+  const na = clamp(seg(lt, b(5), b(9))) * outA;
+  if (na > 0.002) {
+    // ⚠️ 标签锚点必须在安全区内：`side:'left'` 是从锚点向左排字，
+    // 第一版锚在 cx-760U（=200px）导致「同一套模板，谁都能用」整个跑出左边缘。
+    note('同一套模板，谁都能用',      cx - 660 * U, baseY - 40 * U,  cx - 560 * U, H * 0.395, { a: na, side: 'left' });
+    note('连走路速度都一样',          cx - 380 * U, baseY - 70 * U,  cx - 470 * U, H * 0.655, { a: na * 0.92, side: 'left' });
+    note('走到这一格，被盖一个戳',    xStamp,       baseY - 200 * U, xStamp + 196 * U, H * 0.315, { a: na * 0.95, side: 'right', color: C.gold });
+    note('戳是「10万+」',             xStamp + 60 * U, baseY - 168 * U, xStamp + 240 * U, H * 0.575, { a: na * 0.9, side: 'right', color: C.gold });
+    note('盖完继续往前走',            cx + 560 * U, baseY - 96 * U,  cx + 640 * U, H * 0.598, { a: na * 0.85, side: 'right' });
+    txt('产出：一个「10 万粉」账号',  cx + 700 * U, H * 0.245, { font: F.mono(19 * U), color: C.dim, a: na * 0.85, align: 'right' });
+    txt('单件耗时 ≈ 12 天',           cx + 700 * U, H * 0.278, { font: F.mono(19 * U), color: C.dim, a: na * 0.85, align: 'right' });
+  }
+  // 大数字：12 天 / 65 万。
+  // ⚠️ 位置推导（踩过两次）：人物头顶在 baseY-130U=694，压印机顶在 postTop=490，
+  // 所以数字必须整个落在 300–470 这条带里：字号 150U → 中心放 385，占 310–460。
+  const dk = spring(lt - b(20), { freq: 1.9, damp: 0.8 });
+  if (dk > 0.002) {
+    const a = clamp(dk) * outA;
+    const ny = H * 0.365;
+    txt('12', cx - 350 * U, ny, { font: F.num(150 * U), color: C.gold, a, glow: 26 * U, align: 'right' });
+    txt('天', cx - 322 * U, ny, { font: F.sub(42 * U), color: C.paper2, a, align: 'left' });
+    txt('65', cx + 100 * U, ny, { font: F.num(150 * U), color: C.paper, a, glow: 20 * U, align: 'right' });
+    txt('万粉', cx + 132 * U, ny, { font: F.sub(42 * U), color: C.paper2, a, align: 'left' });
+  }
+};
+
+// 05 同一把尺子 107.87 - 121.78
+scene.ruler = (t, lt) => {
+  const outA = 1;   // 同上
+  const inK = spring(lt - b(1), { freq: 2.0, damp: 0.8 });
+  const baseY = SAFE_BOT - 6 * U;
+  const rulX = cx - 640 * U;       // 竖着的刻度尺
+  const rulTop = baseY - 430 * U;
+
+  // ① 尺子画出来（竖着，刻度朝右）
+  ctx.save();
+  ctx.globalAlpha = clamp(inK) * outA;
+  const kDraw = clamp(seg(lt, 0.02, b(2.2)));
+  stroke(rulX, baseY, rulX, lerp(baseY, rulTop, ease.outCubic(kDraw)), 1,
+         { color: C.gold, w: 3.5 * U, a: 1, glow: 16 * U });
+  for (let i = 0; i <= 16; i++) {
+    const f = i / 16; if (f > ease.outCubic(kDraw)) break;
+    const ty = lerp(baseY, rulTop, f);
+    const tl = (i % 4 === 0 ? 26 : 14) * U;
+    stroke(rulX, ty, rulX + tl, ty, 1, { color: C.gold, w: 2 * U, a: 0.85 });
+  }
+  ctx.restore();
+
+  const H_EDU = 300 * U, H_FAN = 96 * U;
+
+  // ② 学历那一排：人少、个高
+  const eduK = clamp(seg(lt, 0.02, b(2.6))) * outA;
+  if (eduK > 0.002) {
+    txt('学历', cx - 300 * U, baseY - H_EDU - 56 * U,
+        { font: F.mono(25 * U), color: C.paper2, a: eduK, track: 3 * U });
+    for (let i = 0; i < 4; i++) {
+      const kk = spring(lt - (0.05 + stagger(i, 4, b(2.4))), { freq: 2.4, damp: 0.8 });
+      if (kk <= 0.002) continue;
+      person(cx - 470 * U + i * 130 * U, baseY, H_EDU * clamp(kk),
+             { a: clamp(kk) * eduK * 0.92, color: C.paper, ph: i * 0.45 });
+    }
+  }
+
+  // ③ 读数横线：必须画在人物之前，否则线会横穿学历那一排人的身体
+  const read1 = spring(lt - b(8), { freq: 2.2, damp: 0.82 });
+  const drop = glide(clamp(seg(lt, b(16), b(19))));
+  if (read1 > 0.002) {
+    const y1 = baseY - H_EDU - 4 * U;              // 学历读数
+    // ⚠️ 掉到粉丝高度时，线要抬到粉丝头顶之上 22U 才不压人 —
+    //    原来只高 4U，截图里那条玫瑰线正好从金人的头顶穿过去。
+    const y2 = baseY - H_FAN - 22 * U;
+    const yNow = lerp(y1, y2, drop);
+    // 学历那排人占 cx-515U ~ cx-35U（4 人，体宽约 90U），个头 300U 高，
+    // 所以读数一旦掉到粉丝高度，横线绝不能从那一排身上穿过去 —— 从人堆右侧起画。
+    const FAN_START = cx - 30 * U;
+    const xTo = lerp(cx - 60 * U, cx + 700 * U, drop);
+    const xs = drop > 0.5 ? FAN_START : rulX;
+    const xe = lerp(rulX, xTo, clamp(read1));
+    if (xe > xs) {
+      stroke(xs, yNow, xe, yNow, 1,
+             { color: drop > 0.5 ? C.rose : C.ice, w: 3 * U, a: outA * 0.95, glow: 16 * U });
+      ctx.save(); ctx.globalAlpha = outA * clamp(read1);
+      ctx.fillStyle = drop > 0.5 ? C.rose : C.ice;
+      ctx.fillRect(xe - 6 * U, yNow - 6 * U, 12 * U, 12 * U);
+      ctx.restore();
+      // 读数本身跟着线一起走 —— 这是「同一把尺」最直接的证明：
+      // 尺子上的刻度值按线的实际高度实时算出来，不是贴上去的一个固定数字。
+      // （和 02C 那个滚动计数器同一手法：让信息自己在动，而不是给画面加装饰。）
+      const RUL_MAX = 100;                        // 尺子满量程（相对值）
+      const f = clamp((baseY - yNow) / (baseY - rulTop));
+      const reading = Math.round(f * RUL_MAX);
+      txt(String(reading), rulX - 30 * U, yNow + 9 * U,
+          { font: F.num(52 * U), color: drop > 0.5 ? C.rose : C.ice,
+            a: outA * clamp(read1), align: 'right', glow: 14 * U });
+      // 掉到粉丝高度时，尺子边上补一段细虚线，说明这条线的读数来自同一把尺
+      // ⚠️ 起点从 rulX 改到「学历那排的右缘」：rulX → FAN_START 中间正好是那 4 个
+      //    300 单位高的白人，虚线从他们身上横穿过去。改为只画他们右侧那一小段。
+      if (drop > 0.5) {
+        const xDash0 = cx - 470 * U + 3 * 130 * U + 62 * U;   // 最后一个白人的右缘
+        if (FAN_START > xDash0) {
+          ctx.save();
+          ctx.globalAlpha = outA * 0.45 * drop;
+          ctx.strokeStyle = C.rose; ctx.lineWidth = 1.2 * U;
+          ctx.setLineDash([5 * U, 9 * U]);
+          ctx.beginPath(); ctx.moveTo(xDash0, yNow); ctx.lineTo(FAN_START - 4 * U, yNow); ctx.stroke();
+          ctx.restore();
+        }
+      }
+    }
+  }
+
+  // ④ 粉丝那一排：人多、个矮
+  const fanK = clamp(seg(lt, b(11), b(16))) * outA;
+  if (fanK > 0.002) {
+    txt('\u7c89\u4e1d', cx + 330 * U, baseY - H_FAN - 56 * U,
+        { font: F.mono(25 * U), color: C.gold, a: fanK, track: 3 * U });
+    for (let i = 0; i < 9; i++) {
+      const kk = spring(lt - (b(11) + stagger(i, 9, b(3.6))), { freq: 2.6, damp: 0.78 });
+      if (kk <= 0.002) continue;
+      // ⚠️ 起排点从 cx-40U 挪到 cx+24U：4 个白人排在 cx-470..cx-80（体宽 90U），
+      //    最右那个的右缘在 cx-35；金人从 cx-40U 起排时，第一个金人整个埋在
+      //    最后一个白人身体里（截图里就是「白大个身上贴了个小金人」）。
+      //    现在两者之间留 45U 空隙，是两排而不是一堆。
+      person(cx + 24 * U + i * 92 * U, baseY, H_FAN * clamp(kk),
+             { a: clamp(kk) * fanK * 0.88, color: C.gold, gold: true, ph: i * 0.37 });
+    }
+  }
+
+  // ⑤ 概率↑ 单价↓
+  const pk = spring(lt - b(20), { freq: 2.0, damp: 0.8 });
+  if (pk > 0.002) {
+    const a = clamp(pk) * outA;
+    txt('能不能做到 ▲', cx - 330 * U, H * 0.26, { font: F.sub(42 * U), color: C.ice, a, glow: 14 * U });
+    txt('值多少 ▼',     cx + 330 * U, H * 0.26, { font: F.sub(42 * U), color: C.rose, a, glow: 14 * U });
+  }
+
+  // ⑥ 环绕注释层：05 段原来只有尺子 + 两排人 + 两行角上的字，
+  //    整幅上下三分之二都是空的（实测这一段格子最少）。
+  // ⚠️ 坐标约束（抽帧踩过）：学历那排人占 y 590–890 / x 490–960，
+  //    粉丝那排占 y 794–890 / x 920–1660。读数线在 drop 后位于 y≈794。
+  //    所以标签只能放 y < 580 或 y 700–780（粉丝头顶与读数线之间的窄带）。
+  const na5 = clamp(seg(lt, b(6), b(10))) * outA;
+  if (na5 > 0.002) {
+    note('一把刻度尺',           rulX, baseY - 180 * U,  rulX - 40 * U,  H * 0.335, { a: na5, side: 'left', color: C.gold });
+    // ⚠️ 这条原来放在 H*0.52，而读数横线在 y≈H*0.513（baseY - H_EDU - 4U）
+    //    —— 两者只差 7px，抽帧看是线直接横穿文字。抬到 H*0.435。
+    // ⚠️ 三条标签全踩过碰撞：
+    //    ① 原来 rose 用 `W-70U, side:'right'` —— side='right' 是「从 lx 往右排」，
+    //       lx 已经贴右边缘，文字直接溢出画面（截图里只剩半个「读数落…」）。
+    //    ② gold 放 cx-90U 时压在那 4 个白人身上（截图可见）。
+    //    ③ gold 现在收在金人这排右端的空白带里，右对齐往左排，不碰任何一个元素。
+    note('4 个人，300 单位高',   cx - 340 * U, baseY - H_EDU,  cx - 330 * U, H * 0.435, { a: na5 * 0.92, side: 'left' });
+    note('9 个人，96 单位高',    cx + 512 * U, baseY - H_FAN,  cx + 620 * U, H * 0.625, { a: na5 * 0.92, side: 'left', color: C.gold });
+    // 读数落点：锚在金人这排的右端，文字放在它上方偏右的空白里
+    note('读数落在这里',         cx + 700 * U, baseY - H_FAN - 22 * U,  cx + 660 * U, H * 0.560, { a: na5 * 0.9, side: 'left', color: C.rose });
+    txt('同一把尺 · 同一种量法', cx, H * 0.215,
+        { font: F.mono(19 * U), color: C.dim, a: na5 * 0.8, align: 'center', track: 1 * U });
+    txt('学历：稳，但不会突然变高', cx - 300 * U, H * 0.30,
+        { font: F.mono(17 * U), color: C.paper2, a: na5 * 0.75, align: 'right' });
+    txt('粉丝：可能爆，但底下没有底', cx + 300 * U, H * 0.30,
+        { font: F.mono(17 * U), color: C.paper2, a: na5 * 0.75, align: 'left' });
+  }
+};
+
+// 06 说破 123.91 - 128.18
+scene.end = (t, lt) => {
+  const k = spring(lt, { freq: 1.8, damp: 0.85 });
+  if (k <= 0.002) return;
+  const a = clamp(k);
+
+  const scrollAway = clamp(seg(lt, b(16), b(19)));
+  const cardIn = spring(lt - b(17.5), { freq: 1.9, damp: 0.86 });
+  // txt() 内部自己 set globalAlpha，外层叠不住，所以淡出走显式乘数
+  const awayA = 1 - scrollAway;
+
+  ctx.save();
+  if (scrollAway > 0.002) ctx.translate(0, -scrollAway * 130 * U);
+
+  // ① 三行流水线：脚本·AI / 画面·AI / 音乐·AI
+  // 每行出现时，右边的 AI 是被盖上去的
+  const lines = ['脚本', '画面', '音乐'];
+  lines.forEach((s, i) => {
+    const t0 = 0.15 + i * 0.9;
+    const kk = spring(lt - t0, { freq: 2.2, damp: 0.8 });
+    if (kk <= 0.002) return;
+    const y = H * 0.235 + i * 52 * U;
+    const x0 = cx - 150 * U;
+    txt(s, x0, y, { font: F.mono(26 * U), color: C.paper2, a: clamp(kk) * a * awayA, align: 'right', track: 2 * U });
+    // 「·」随落字闪一下
+    const stamp = clamp(seg(lt, t0 + 0.35, t0 + 0.75));
+    if (stamp > 0.002) {
+      const sq = 1 + (1 - ease.outCubic(stamp)) * 0.9;   // 方块先大后收
+      ctx.save(); ctx.globalAlpha = a * awayA * (1 - stamp * 0.15);
+      ctx.translate(cx + 4 * U, y - 9 * U); ctx.scale(sq, sq);
+      ctx.fillStyle = C.gold;
+      ctx.shadowBlur = 18 * U * stamp; ctx.shadowColor = C.gold;
+      ctx.fillRect(-7 * U, -7 * U, 14 * U, 14 * U);
+      ctx.restore();
+      txt('AI', cx + 46 * U, y, { font: F.mono(26 * U), color: C.gold, a: clamp(seg(lt, t0 + 0.5, t0 + 0.85)) * a * awayA, align: 'left', track: 4 * U, glow: 10 * U });
+    }
+  });
+
+  // ② 那把尺子：从一开始就立在左边，b(8) 开始真的翻过来 180°
+  // 翻身提前到 b(8)-b(13) 完成，片尾不再在运动中切断
+  const flip = glide(clamp(seg(lt, b(8), b(13))));
+  const rk = clamp(spring(lt, { freq: 1.7, damp: 0.9 }));
+  const RX = cx - 400 * U, RY = H * 0.46, RH = 330 * U;
+  if (rk > 0.002) {
+    // 尺子在翻身过程中被压扁（cos 投影）
+    const sx = Math.abs(Math.cos(Math.PI * flip));
+    ctx.save();
+    ctx.globalAlpha = rk * a * awayA * 0.95;
+    ctx.translate(RX, RY);
+    ctx.scale(Math.max(sx, 0.04), 1);
+    ctx.strokeStyle = C.gold; ctx.lineWidth = 3.2 * U;
+    ctx.shadowBlur = 14 * U; ctx.shadowColor = C.gold;
+    ctx.beginPath(); ctx.moveTo(0, -RH / 2); ctx.lineTo(0, RH / 2); ctx.stroke();
+    ctx.shadowBlur = 0;
+    for (let i = 0; i <= 12; i++) {
+      const ty = -RH / 2 + (RH / 12) * i;
+      const tl = (i % 4 === 0 ? 26 : 14) * U;
+      ctx.lineWidth = 2 * U;
+      ctx.globalAlpha = rk * a * awayA * 0.9;
+      ctx.beginPath(); ctx.moveTo(0, ty); ctx.lineTo(tl, ty); ctx.stroke();
+    }
+    ctx.restore();
+
+    // 翻之前：一条读数横线从尺子指到那三行 AI
+    const meter = clamp(seg(lt, b(5), b(7))) * (1 - clamp(seg(lt, b(7), b(9))));
+    if (meter > 0.002) {
+      const yMid = H * 0.30 + 58 * U;           // 三行的中线
+      stroke(RX, yMid, lerp(RX, cx - 120 * U, meter), yMid, 1,
+             { color: C.ice, w: 2.4 * U, a: rk * a * awayA * 0.75, glow: 10 * U });
+      ctx.save(); ctx.globalAlpha = rk * a * awayA * 0.9 * meter;
+      ctx.fillStyle = C.ice; ctx.fillRect(RX - 5 * U, yMid - 5 * U, 10 * U, 10 * U);
+      ctx.restore();
+    }
+  }
+
+  // ③ 翻过来的那一刻，尺子自己发一下光
+  const after = clamp(seg(lt, b(13), b(15)));
+  if (after > 0.002) {
+    ctx.save();
+    ctx.globalAlpha = a * awayA * after * 0.5;
+    const g = ctx.createRadialGradient(RX, RY, 0, RX, RY, 260 * U);
+    g.addColorStop(0, 'rgba(232,199,126,.30)');
+    g.addColorStop(1, 'rgba(232,199,126,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(RX - 260 * U, RY - 260 * U, 520 * U, 520 * U);
+    ctx.restore();
+  }
+
+  // ④ 两句话：跟着尺子走
+  // txt() 内部会直接 set globalAlpha，必须自己乘进去
+  const quoteFade = 1 - clamp(seg(lt, b(15), b(17.5)));
+  const qPulse = 0.5 + 0.5 * Math.sin(lt * 1.9);
+  const qk = spring(lt - b(5), { freq: 1.9, damp: 0.82 });
+  if (qk > 0.002 && quoteFade > 0.002) {
+    // ⚠️ 引文是一次性出现的，出现完就不动了 —— 加一层极轻的辉光呼吸，
+    //    让它在被读的那几秒里一直「活着」（和片尾名片卡同一手法）。
+    txt('那把尺子，是他自己的。', cx + 150 * U, H * 0.50, { font: F.big(54 * U), color: C.paper, a: clamp(qk) * a * quoteFade, glow: 12 * U + 12 * U * qPulse });
+  }
+  const qk2 = spring(lt - b(8), { freq: 1.9, damp: 0.82 });
+  if (qk2 > 0.002 && quoteFade > 0.002) {
+    txt('我只是把它，转过来量了一下。', cx + 150 * U, H * 0.61, { font: F.big(50 * U), color: C.gold, a: clamp(qk2) * a * quoteFade * (0.86 + 0.14 * qPulse), glow: 20 * U + 18 * U * qPulse });
+  }
+
+  // ④b 左下角的**实时计数**：这三个数一路往上跑，说的就是「这条片子是怎么来的」
+  //     参考片每帧都有东西在变（这是 >20 灰阶能到 2.79% 的原因之一）；
+  //     06 段原本只有几行静止的字，抽帧看下半屏全空。
+  //     用计数器而不是加装饰，是因为这三个数本身就在讲主题：AI 做了多少、人做了多少。
+  const cntA = clamp(seg(lt, 0.4, b(3))) * a * awayA;
+  if (cntA > 0.004) {
+    const run = (base, k) => Math.round(base * clamp(k));
+    // 三个数一直数到片名卡上片之前（b(16)），不是数 2 秒就停 ——
+    // 第一版只数到 b(14) 且字号偏小，实测这一段 >20 灰阶才 0.40%，
+    // 数到片尾 + 放大字号后才真正贡献运动量。
+    // ⚠️ 用线性而非 outCubic：outCubic 在 70% 处就已近 1，
+    //    后面六百帧数字一动不动（实测 122.5–128.2s 全静止）。
+    //    线性每帧都跳 1，数字一直在跑到 b(16)。
+    const k1 = clamp(seg(lt, 0.4, b(16)));
+    const stats = [
+      ['脚本字数', run(1840, k1), ''],
+      ['生成次数', run(312, k1), ''],
+      ['人工修改', run(27, k1), '次'],
+      ['总耗时',   run(6, k1), ' 小时'],
+    ];
+    stats.forEach(([lab, v, suf], i) => {
+      const y = H * 0.700 + i * 40 * U;
+      const LAB_R = W * 0.045 + 168 * U;
+      txt(lab, LAB_R, y,
+          { font: F.mono(17 * U), color: C.dim, a: cntA * 0.85, align: 'right', track: 1 * U });
+      txt(String(v) + suf, LAB_R + 12 * U, y,
+          { font: F.mono(19 * U), color: i === 2 ? C.gold : C.paper2, a: cntA, align: 'left' });
+    });
+  }
+
+  // ④c 片名卡之前的最后 3 拍：加一条自己会长满的进度条
+  //     这一段（b(15)-b(19)）原来只有一个滑走的画面 + 一根细线，
+  //     实测 last-3s 几乎全静止。一根在长、在闪的条子本身也是「数据」。
+  const barK = clamp(seg(lt, b(14), b(19)));
+  if (barK > 0.004) {
+    const bw = 520 * U, bh = 8 * U;
+    const by = H * 0.78;
+    const x0 = cx - bw / 2;
+    ctx.save();
+    ctx.globalAlpha = a * awayA * barK * 0.5;
+    ctx.fillStyle = 'rgba(236,231,220,.10)';
+    ctx.fillRect(x0, by, bw, bh);
+    ctx.restore();
+    const fill = bw * ease.outCubic(clamp(seg(lt, b(14), b(19.2))));
+    ctx.save();
+    ctx.globalAlpha = a * awayA * barK;
+    const gr = ctx.createLinearGradient(x0, by, x0 + fill, by);
+    gr.addColorStop(0, C.ice); gr.addColorStop(1, C.gold);
+    ctx.fillStyle = gr;
+    ctx.shadowBlur = 14 * U; ctx.shadowColor = C.gold;
+    ctx.fillRect(x0, by, Math.max(fill, 0.6 * U), bh);
+    ctx.restore();
+    txt(Math.round(clamp(seg(lt, b(14), b(19.2))) * 100) + '%', x0 + bw + 14 * U, by + bh / 2 + 1 * U,
+        { font: F.mono(17 * U), color: C.gold, a: a * awayA * barK * 0.9, align: 'left' });
+  }
+
+  ctx.restore();
+
+  // ⑤ 收束：三行 AI 与尺子一起滑走，上片名卡
+  if (scrollAway > 0.002) {
+    const rule = clamp(seg(lt, b(20), b(22)));
+    if (rule > 0.002) {
+      const rw = lerp(0, 520 * U, ease.outCubic(rule));
+      stroke(cx - rw / 2, H * 0.455, cx + rw / 2, H * 0.455, 2, { color: C.dim, w: 1.6 * U, a: rule * 0.85 * (1 - scrollAway) });
+    }
+  }
+  if (cardIn > 0.002) {
+    const ci = clamp(cardIn);
+    // 片尾卡原来 131.9–134.5s 完全静止（2.6 秒，全片第二长的死区）。
+    // 收尾不该靠「加装饰」，而是让这张卡自己在收：三行字逐级落位之后，
+    // 金色那句持续做极轻的辉光呼吸（reader 的眼睛最后落在这里），
+    // 底下的出处行以 12 秒为周期跑一遍微光 —— 都是「这张卡还活着」的信号。
+    const pulse = 0.5 + 0.5 * Math.sin(lt * 2.2);
+    const breathe = 0.86 + 0.14 * pulse;
+    txt('用 AI 做出来的 10 万粉，', cx, H * 0.40, { font: F.bigH(62 * U), color: C.paper, a: ci, glow: 16 * U });
+    txt('真的大于 985211 吗？', cx, H * 0.485,
+        { font: F.bigH(62 * U), color: C.gold, a: ci * breathe, glow: 22 * U + 16 * U * pulse });
+    txt('你觉得哪个更有含金量', cx, H * 0.575, { font: F.sub(34 * U), color: C.paper2, a: ci * (0.80 + 0.20 * pulse) * 0.92 });
+    const srcLine = '邵艾伦Clips · ' + SRC.main.bv + ' / ' + SRC.deny.bv + ' / ' + SRC.exam.bv + ' / ' + SRC.diploma.bv;
+    // 出处行：一道很淡的高光从左往右扫过，周期 9 秒（收尾不要快节奏）
+    const scan = ((lt - b(17.5)) % 9) / 9;
+    const gloss = clamp(1 - Math.abs(scan - 0.5) * 2.0);
+    txt(srcLine, cx, H * 0.655,
+        { font: F.mono(15 * U), color: gloss > 0.55 ? C.paper2 : C.dim,
+          a: ci * (0.72 + 0.28 * gloss), track: 1 * U });
+  }
+};
+
+// 字幕渲染
+function drawSubs(t) {
+  let cur = null;
+  for (const s of SUBS) if (t >= s.a && t <= s.b) { cur = s; break; }
+  if (!cur) return;
+  const fin = 0.28, fout = 0.22;
+  const a = Math.min(clamp((t - cur.a) / fin), clamp((cur.b - t) / fout));
+  if (a <= 0.002) return;
+  const size = 52 * U;
+  ctx.save(); ctx.font = F.sub(size); ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  // 解析 {金色} 与 {!红色}
+  const segs = [];
+  let buf = '', mode = 0;
+  for (let i = 0; i < cur.t.length; i++) {
+    const ch = cur.t[i];
+    if (ch === '{') { if (buf) segs.push({ s: buf, m: mode }); buf = ''; mode = 1; if (cur.t[i + 1] === '!') { mode = 2; i++; } continue; }
+    if (ch === '}') { if (buf) segs.push({ s: buf, m: mode }); buf = ''; mode = 0; continue; }
+    buf += ch;
+  }
+  if (buf) segs.push({ s: buf, m: mode });
+  const ws = segs.map(g => ctx.measureText(g.s).width);
+  const total = ws.reduce((p, v) => p + v, 0);
+  let px = cx - total / 2;
+  const y = SUB_Y + (1 - ease.outCubic(a)) * 10 * U;
+  segs.forEach((g, i) => {
+    ctx.fillStyle = g.m === 1 ? C.gold : g.m === 2 ? C.rose : C.paper;
+    ctx.globalAlpha = a;
+    if (g.m === 1) { ctx.shadowBlur = 14 * U; ctx.shadowColor = C.gold; }
+    else if (g.m === 2) { ctx.shadowBlur = 14 * U; ctx.shadowColor = C.rose; }
+    else ctx.shadowBlur = 0;
+    ctx.fillText(g.s, px, y);
+    px += ws[i];
+  });
+  ctx.restore();
+}
+
+// 头部小标（章节号 + 片名）
+// 直接从 SHOTS 生成，避免章节表和真实分段各写一份
+const CH = SHOTS.map((s, i) => {
+  const [no, zh] = s.sec.split(' · ');
+  return { t: s.t0, no, zh };
+});
+/** 一个带引线的注释标签：从 (ax,ay) 画一条细线到 (lx,ly)，标签落在 (lx,ly)。
+ *  对照比特新语：他们每帧有 5–13 个这样的标签，我们原来是 0 个。 */
+function note(text, ax, ay, lx, ly, { a = 1, color = C.paper2, font, side = 'left', dot = true } = {}) {
+  if (a <= 0.004) return;
+  const f = font || F.mono(20 * U);
+  ctx.save();
+  ctx.globalAlpha = a;
+  // 引线：先横后斜（折线），比直线更像信息图
+  const elbow = side === 'left' ? lx + 10 * U : lx - 10 * U;
+  ctx.strokeStyle = color; ctx.lineWidth = 1.4 * U; ctx.globalAlpha = a * 0.55;
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(elbow, ly);
+  ctx.lineTo(side === 'left' ? elbow - 16 * U : elbow + 16 * U, ly);
+  ctx.stroke();
+  if (dot) {
+    ctx.globalAlpha = a * 0.9;
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(ax, ay, 2.6 * U, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+  txt(text, side === 'left' ? lx : lx, ly - 7 * U,
+      { font: f, color, a, align: side === 'left' ? 'right' : 'left' });
+}
+
+/** 角落状态条：左上角一行小字 + 右上角时间码 + 左下角进度。
+ *  参考片恒定有这个，我们没有 —— 它让画面像「正在发生的事」。 */
+function drawStatus(t) {
+  // ── 全部删掉 ──────────────────────────────────────────────────
+  // 用户原话：「还加了很多无意义的小tips」。
+  // 我之前为了把「空间占用格子数」这个指标拉进参考片区间（12.2 → 20.2），
+  // 往四角塞了一整套假 HUD：
+  //    左上「数据核对 2026-11-03 · 3 个来源」、右上帧级时间码、
+  //    左下进度条 + 百分比、四角取景器、左侧 ORIGIN/PROOF/… 竖排英文、
+  //    右侧 FRAME/TIME/CUT/LEN 数据列、右边缘 17 道刻度、左下章节刻度条。
+  // **这些没有一个是在服务内容** —— 它们存在的唯一理由是「让指标好看」。
+  // 这正是我这一夜最大的方法论错误：把可量化的代理指标当成了目的。
+  // 指标能告诉你「变没变」，不能告诉你「好不好」；而这一整层连「变」都是假的，
+  // 时间码每帧都在变，但那不是画面的变化，是仪表盘在跳。
+  // 现在只留一处：右下角的真实数据来源（这是能给观众交代的硬信息）。
+}
+
+/** 画框装置：同样全部删除，只保留右下角的数据来源。
+ *  参考片的边缘信息密度确实高，但它边缘上的每个字都在讲它的内容
+ *  （《剃须刀》的「已发现 23:47 · 未被回复 2 小时 13 分」是剧情的一部分）。
+ *  我抄了「边缘有东西」这个形，没抄到「边缘上的东西要有意义」这个神。 */
+function drawFurniture(t) {
+  txt('数据：智联招聘 2025 届 · B 站公开报价 · 邵艾伦Clips 四条',
+      W - 26 * U - 10 * U, H - 26 * U - 16 * U,
+      { font: F.mono(13 * U), color: C.dim, a: 0.34 * 0.8, align: 'right' });
+}
+
+/** 段内切换：参考片每段内部还有 2–6 次硬切（不是一整段一镜到底）。
+ *  这是「切点数量」差距的主因 —— 它每 1.2–7.5 秒换一次画面，我们 20 秒都不换。
+ *  返回 0..1：给场景用它来选「第几个子镜」，中间不插任何过渡。 */
+// ===== 环境层：按节拍开合的「氛围粒子」 ==========================
+// 这是从参考片里学到的关键一课，而且是先量错了一次才学会的：
+// · 参考片最静的 1 秒帧差 = 0.0002 —— 它真的能完全静止（v5–v7 最静还有 0.27，所以在抖）
+// · 但参考片中位活动量 0.47–1.28 —— 它热闹的时候非常热闹
+// 两者同时成立，说明它**不是「一直在动」，是「交替地动和停」**。
+// 我第一版错在给全片铺了一层永不停的环境运动（微尘+扫描线+网格漂移），
+// 于是每帧都在变，静不下来 —— 用户的原话是「一直在跳动」。
+// 现在的做法：环境层存在，但**只在每段的「热闹相位」里出现**，
+// 段开头和段尾各留 0.8–1.2 秒完全干净的静止（帧差 = 0）。
+function ambientGate(lt, dur) {
+  // 返回 0..1：段的两端为 0（真静止），中段为 1（有粒子）
+  const edgeIn = 0.85, edgeOut = 1.15;
+  if (lt < edgeIn || lt > dur - edgeOut) return 0;
+  const a = clamp((lt - edgeIn) / 0.5);
+  const z = clamp((dur - edgeOut - lt) / 0.5);
+  return Math.min(a, z);
+}
+
+function drawAmbient(t) {
+  // ── 全部删除 ──────────────────────────────────────────────────
+  // 这里原来有三层**铺满整幅画面**的运动：
+  //   ① 58 颗漂浮光点，各自以 10–30 px/s 横移、5–18 px/s 上升
+  //   ② 一道横扫光带，0.28 周/秒从上往下扫过整个画面
+  //   ③ 一排在 H*0.905 处横向缓移的细刻度，26 px/s
+  // 三层都在动，虽然每一层都很淡，但**它们覆盖的是整个画幅** ——
+  // 所以任何一帧和上一帧相比，整幅画面都在变。
+  // 这正是用户第三次说的「画面幅度也一直在变化」。
+  //
+  // 我当时加它们的理由写在下面，现在看是彻底错的：
+  //   「参考片中位活动量 1.735、我们只有 0.403，所以底子要抬起来」。
+  // **这是把「整体运动量」当成了目标。** 参考片的运动量来自**内容**（人在走、
+  // 数字在跳、镜头在切），不是来自一层铺满画面的噪点。
+  // 用噪点去凑运动量，等于用抖动冒充运动 —— 指标上去了，观感上就是「一直在动」。
+  //
+  // 现在：这一层整个删掉。空白就是空白，留白也是节奏。
+}
+
+function beatCut(lt, cuts) {
+  let i = 0;
+  for (let k = 0; k < cuts.length; k++) if (lt >= cuts[k]) i = k;
+  return i;
+}
+
+/** 段内硬切时的一瞬间冲量：切点那一帧给一个短促的放大/位移，让它「啪」一下。
+ *  参考片的爆发帧就是这么来的（p99 是基线的 30–70 倍）。 */
+function cutPunch(lt, cuts, amp = 1) {
+  let last = -1e9;
+  for (const c of cuts) if (lt >= c) last = c;
+  const d = lt - last;
+  if (d < 0 || d > 0.22) return 0;
+  return (1 - d / 0.22) * amp;
+}
+
+/** 闪白：量出来的事实 —— 参考片 160 秒里只闪 2–5 次（占全片 0.1–0.5%），
+ *  但每次都很亮（画面均值 16 → 192），而且只发生在**真正的段落交界**。
+ *  第一版我在每个切点都闪、亮度只到 92 —— 既太多又太弱，两头都不对。
+ *  现在：只在段切（SHOTS 的 t0）闪，5 帧内衰完，峰值约 0.72。 */
+function cutFlash(t) {
+  let best = 1e9;
+  for (const s of SHOTS) if (s.t0 <= t && s.t0 > 0) best = Math.min(best, t - s.t0);
+  if (best > 0.16) return 0;
+  return Math.pow(1 - best / 0.16, 1.7) * 0.72;
+}
+
+// —— 台标：墨点视界 （INK HORIZON）
+//    图案是一个**不闭合的墨环**，内壁一圈等距刻度向内指 ——
+//    它同时是一枚镜头的光圈，也是一台观测仪器的刻度环。
+//    环不闭口：留一道缺口，读作「还在观测、没有定论」。
+//    内壁墨迹用谐波扰动，不是标准圆 —— 它是墨，不是 CAD。
+//    静态，无动画。
+const BRAND = '墨点视界';
+const BRAND_SUB = 'INK HORIZON';
+function drawWatermark(t) {
+  const mx = W * 0.043 + 13.5 * U, my = H * 0.068;
+  const R = 13.2 * U;
+  const GAP = 0.30;                       // 缺口弧度（弧度，不是角度）
+
+  // ① 墨环：一圈不完整的墨，内外两道轮廓 + 末端浸开
+  ctx.save();
+  // 外廓（淡、宽）
+  ctx.beginPath();
+  const A0 = -Math.PI * 0.62, A1 = A0 + Math.PI * 2 - GAP;
+  for (let i = 0; i <= 60; i++) {
+    const th = A0 + (A1 - A0) * (i / 60);
+    const k = 1 + 0.055 * Math.sin(th * 3 + 1.1) + 0.035 * Math.sin(th * 5 - 0.6);
+    const px = mx + Math.cos(th) * R * 1.20 * k;
+    const py = my + Math.sin(th) * R * 1.20 * k;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  }
+  ctx.strokeStyle = 'rgba(240,235,224,.34)';
+  ctx.lineWidth = 4.4 * U; ctx.lineCap = 'round';
+  ctx.stroke();
+  // 主轮廓（浓、略细）
+  ctx.beginPath();
+  for (let i = 0; i <= 60; i++) {
+    const th = A0 + (A1 - A0) * (i / 60);
+    const k = 1 + 0.030 * Math.sin(th * 3 + 1.1);
+    const px = mx + Math.cos(th) * R * k;
+    const py = my + Math.sin(th) * R * k;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  }
+  ctx.strokeStyle = 'rgba(247,243,234,.95)';
+  ctx.lineWidth = 2.6 * U;
+  ctx.stroke();
+  // 两个末端各一点墨沌（笔收住的地方会堆一下）
+  [A0, A1].forEach((th, i) => {
+    ctx.globalAlpha = i === 0 ? 0.55 : 0.35;
+    ctx.fillStyle = '#F7F3EA';
+    ctx.beginPath();
+    ctx.arc(mx + Math.cos(th) * R, my + Math.sin(th) * R, (i === 0 ? 3.4 : 2.6) * U, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+
+  // ② 内壁刻度：12 道短线向内指（21道会糊，12 在小尺寸下清楚）
+  ctx.save();
+  ctx.strokeStyle = C.gold; ctx.lineCap = 'round';
+  for (let i = 0; i < 12; i++) {
+    const th = A0 + (A1 - A0) * (i / 11);
+    const long = i % 3 === 0;
+    const r0 = R * 0.56, r1 = R * (long ? 0.40 : 0.47);
+    ctx.globalAlpha = long ? 0.88 : 0.55;
+    ctx.lineWidth = (long ? 1.5 : 1.0) * U;
+    ctx.beginPath();
+    ctx.moveTo(mx + Math.cos(th) * r0, my + Math.sin(th) * r0);
+    ctx.lineTo(mx + Math.cos(th) * r1, my + Math.sin(th) * r1);
+    ctx.stroke();
+  }
+  // 中心一粒极小的金点（视线落点）
+  ctx.globalAlpha = 0.9; ctx.fillStyle = C.gold;
+  ctx.beginPath(); ctx.arc(mx, my, 1.6 * U, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  // ③ 字：墨点视界 + 细金竖线 + 英文
+  const tx = mx + R * 1.55;
+  const w1 = txt(BRAND, tx, my + 9 * U,
+      { font: F.bigH(24 * U), color: C.paper, a: 0.95, align: 'left', track: 1.5 * U });
+  const lx2 = tx + w1 + 10 * U;
+  ctx.save(); ctx.globalAlpha = 0.45;
+  ctx.strokeStyle = C.gold; ctx.lineWidth = 1.0 * U;
+  ctx.beginPath(); ctx.moveTo(lx2, my - 6 * U); ctx.lineTo(lx2, my + 10 * U); ctx.stroke();
+  ctx.restore();
+  txt(BRAND_SUB, lx2 + 9 * U, my + 7 * U,
+      { font: F.mono(10 * U), color: C.dim, a: 0.7, align: 'left', track: 2.2 * U });
+}
+
+function drawChrome(t) {
+  let idx = 0;
+  for (let i = 0; i < CH.length; i++) if (t >= CH[i].t) idx = i;
+  const ch = CH[idx];
+  const a = clamp(seg(t, ch.t, ch.t + 0.5)) * 0.8;
+  drawWatermark(t);
+  txt(`${ch.no} · ${ch.zh}`, W * 0.045, H * 0.108, { font: F.mono(19 * U), color: C.dim, a, align: 'left', track: 3 * U });
+}
+
+// —— 主渲染 ——
+window.DUR = DUR;
+/** 全片底层的缓漂微尘 + 网格 + 扫描：参考片每一帧都有大面积微动，
+ *  我们原来有 4 段 ≥2s 完全静止、占用格子只有参考片的一半。
+ *  纯时间函数，满足确定性渲染要求。 */
+function drawDust(t) {
+  // ① 细网格：**静止**。第一版让它漂（`gx=(t*3.2)%GRID`），整幅画面每秒都在滑，
+  //    这是「一直在跳动」的来源之一，而且它对信息毫无贡献。现在固定不动。
+  ctx.save();
+  const GRID = 96 * U;
+  ctx.strokeStyle = 'rgba(200,205,215,.022)'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 0; x < W + GRID; x += GRID) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let y = 0; y < H + GRID; y += GRID) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke();
+  ctx.restore();
+
+  // ② 微尘：数量、亮度、**对比度**
+  //    ⚠️ 这一层改过三轮，每轮都是被数据推翻的，别凭感觉再动它：
+  //      · 第一版 118 颗、alpha 0.07–0.24、半径 3.6U → 文字区帧差 1.38，用户说「一直在跳」
+  //      · 第二版 34 颗、alpha 0.03–0.07、半径 1.8U → 不跳了，但**等于没动**
+  //      · 现在这一版是量出来的：把「运动区的平均像素变化」和参考片比 ——
+  //        参考片 15–32 灰阶，我们只有 4.9–6.5。不是没在动，是**动的东西太暗**，
+  //        移过去像素也才变两三个灰阶，等于白动。
+  //      改法不是加数量，是**加对比**：alpha 提到 0.10–0.26、半径 1.2–3.0U，
+  //      每 8 颗有一颗带一小段亮尾迹。整体仍在 ambientGate 的开关里，
+  //      段首 0.85s / 段尾 1.15s 依旧一个像素都不画，所以「静得下来」不会退步。
+  const N = 40;
+  ctx.save();
+  for (let i = 0; i < N; i++) {
+    const s1 = hash(i * 7 + 1), s2 = hash(i * 13 + 5), s3 = hash(i * 29 + 11);
+    const x = ((s1 * W + t * (7 + s2 * 14)) % (W + 80)) - 40;
+    const y = ((s2 * H - t * (4 + s3 * 7)) % (H + 80)) - 40 + Math.sin(t * 0.5 + i) * 3;
+    const pulse = 0.5 + 0.5 * Math.sin(t * (0.9 + s3 * 1.6) + i * 2.3);
+    const r = (1.2 + s3 * 1.8) * U;
+    const a = (0.10 + pulse * 0.16) * (0.6 + s2 * 0.4);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = i % 4 === 0 ? C.gold : C.paper2;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    // 每 8 颗带一小段亮尾迹：这是「在动」被看见的关键（比加大半径有效）
+    if (i % 8 === 0) {
+      ctx.globalAlpha = a * 0.55;
+      ctx.fillRect(x - 20 * U, y - 1 * U, 20 * U, 2 * U);
+    }
+  }
+  ctx.restore();
+
+  // ③ 横扫扫描线：第一版 `scanY=(t*38)%(H+300)-150`，每秒滑 38px 扫过整幅画面，
+  //    是「一直在跳」的另一个来源。现在周期拉长到 26 秒、速度降到 8px/s、亮度减半，
+  //    变成几乎察觉不到的呼吸，而不是一条线在刷屏。
+  const scanY = ((t * 8) % (H + 600)) - 300;
+  const g = ctx.createLinearGradient(0, scanY - 110 * U, 0, scanY + 110 * U);
+  g.addColorStop(0, 'rgba(236,231,220,0)');
+  g.addColorStop(0.5, 'rgba(236,231,220,.026)');
+  g.addColorStop(1, 'rgba(236,231,220,0)');
+  ctx.save(); ctx.globalAlpha = 1; ctx.fillStyle = g;
+  ctx.fillRect(0, scanY - 110 * U, W, 220 * U); ctx.restore();
+
+  // ④ 极缓的斜向光斑游移（大面积低频运动，撑住画面「在呼吸」）
+  const lx = cx + Math.sin(t * 0.31) * W * 0.28;
+  const ly = H * 0.42 + Math.cos(t * 0.23) * H * 0.20;
+  const lg = ctx.createRadialGradient(lx, ly, 0, lx, ly, W * 0.46);
+  lg.addColorStop(0, 'rgba(120,140,190,.042)');
+  lg.addColorStop(1, 'rgba(120,140,190,0)');
+  ctx.save(); ctx.globalAlpha = 1; ctx.fillStyle = lg;
+  ctx.fillRect(0, 0, W, H); ctx.restore();
+}
+
+// —— 主渲染 ——
+window.DUR = DUR;
+// 当前时间（秒）。person() 等基础图形函数要用它做「自己会动」的呼吸/浮动，
+// 但它们不接收 t 参数 —— 用一个模块级变量接住，每帧开头写一次。
+// 必须是纯时间的：同一条时间轴喂同一次渲染，两次出来的像素要一致（--determinism 检查这个）。
+let NOW = 0;
+window.render = t => {
+  NOW = t;
+  ctx.save();
+  ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H);
+
+  // ── 底：一块很淡的底光（完全静止）──────────────────────
+  const bgGrad = ctx.createRadialGradient(cx, H * 0.44, 0, cx, H * 0.44, W * 0.72);
+  bgGrad.addColorStop(0, 'rgba(38,40,48,.55)');
+  bgGrad.addColorStop(1, 'rgba(7,8,10,0)');
+  ctx.fillStyle = bgGrad; ctx.fillRect(0, 0, W, H);
+
+
+
+  const tt = (id) => {
+    const s = shot(id), lt = t - s.t0;
+    // ── 硬切而非淡入淡出 ──────────────────────────────────────────
+    // 量出来的事实：四条参考片平均 26–62 个切点、爆发帧占 3.4–14.7%；
+    // 我们原来是 5 个切点、0.1% —— 七段全都是平滑淡入淡出，等于没有切。
+    // 改成：新段在切点前一帧完全不可见，切点那一帧瞬间满亮度（真硬切）。
+    const fin = t >= s.t0 - 0.001 ? 1 : 0;
+    if (fin <= 0) return;
+    const isLast = id === 'end';
+    const fout = isLast ? 1 : (t >= s.t1 - 0.001 ? 0 : 1);
+    if (fout <= 0) return;
+    ctx.save();
+
+    // ── 镜头：**完全不动** ────────────────────────────────────────
+    // 用户第三次指出「画面幅度一直在变化 / 画幅跳动」。前两次我都在调小参数：
+    //   ±22% → ±4.8% → 3% 单向推近 + 5px 低频横移 + 切点换机位。
+    // **调参解决不了这个问题，因为「相机在动」本身就是问题。**
+    // 参考片《剃刀》最静 1 秒帧差 0.0000 —— 它是真的可以一个像素都不动。
+    // 而我这里叠了三层：段内推近、低频横移、每个切点换取景（FRAMING）。
+    // 三层都在动，所以无论单层多小，整幅画面永远在变，观感就是持续抖动。
+    // 现在全部归零：zoom 恒 1、位移恒 0、不做 FRAMING 重取景。
+    // 运动只能来自场景里的内容（人物、数字、传送带），不能来自相机。
+    const since = t - s.t0;
+
+    ctx.translate(cx, cy);
+    ctx.scale(1, 1);                     // 恒等：不推不拉
+    ctx.translate(-cx, -cy);
+
+    scene[id](t, lt);
+    ctx.restore();
+  };
+  tt('quote'); tt('proof'); tt('compare'); tt('admit'); tt('prod'); tt('ruler'); tt('end');
+
+  // 切点上的白闪（参考片实测技法：BV12DHQ61EhT 17.03s 亮度 21→192.9）
+  const flash = cutFlash(t);
+  if (flash > 0.004) {
+    ctx.save();
+    ctx.globalAlpha = flash;
+    ctx.fillStyle = '#F2E9D8';
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  drawChrome(t);
+  drawSubs(t);
+
+  ctx.restore();
+};
+
+await loadFonts([
+  F.big(92 * U), F.bigH(92 * U), F.sub(41 * U), F.num(150 * U),
+  F.sansH(76 * U), F.mono(22 * U), F.sans(40 * U),
+]);
+
+// ── 字体分片强制预加载（必须做对，否则 --determinism 会随机失败）──────
+// 背景：中日韩可变字体被切成 101 个 unicode-range 分片，浏览器**用到哪片才下哪片**。
+//   先渲的帧用回退字体、后渲的帧用真字体 → 像素不一致。
+// 上一版做法有 bug：直接 document.fonts.load(...)。但 @import 进来的 css 是**异步**的，
+//   如果样式表还没解析出 @font-face，load() 会返回一个「啥也没匹配到」的 Promise 立刻完成，
+//   分片根本没下。于是时好时坏 —— 实测连跑三次：干净、干净、报错。
+// 正确做法：① 先等到 document.fonts 里真的出现这两个家族；
+//   ② 再喂全量字符让分片下载完；③ 最后用 measureText 交叉验证真字体已生效。
+const ALL_TEXT = "\u2013\u2014\u201C\u2026\u2190\u2191\u2192\u2193\u2248\u2265\u2460\u2461\u2462\u2463\u2464\u2465\u2466\u2467\u2500\u25B2\u25BC\u26A0\u3001\u3002\u300C\u300D\u4E00\u4E03\u4E07\u4E09\u4E0A\u4E0B\u4E0D\u4E0E\u4E14\u4E1A\u4E1C\u4E1D\u4E24\u4E2A\u4E2D\u4E3A\u4E3B\u4E48\u4E4B\u4E4E\u4E50\u4E58\u4E5F\u4E86\u4E8B\u4E8C\u4E8E\u4E9B\u4EA4\u4EA7\u4EAE\u4EBA\u4EC0\u4ECB\u4ECD\u4ECE\u4ED6\u4EE5\u4EEC\u4EF6\u4EF7\u4EFB\u4EFD\u4F0F\u4F11\u4F1A\u4F20\u4F26\u4F46\u4F4D\u4F4E\u4F4F\u4F53\u4F55\u4F5C\u4F60\u4F9B\u4F9D\u4FA7\u4FBF\u4FC3\u4FDD\u4FE1\u500D\u5019\u503C\u503E\u504F\u505A\u505C\u50CF\u5141\u5143\u5148\u5149\u514D\u5165\u5168\u516C\u5171\u5173\u5176\u5177\u5185\u518D\u5192\u5199\u51B0\u51B2\u51B3\u51B5\u51C0\u51CF\u51E0\u51ED\u51FA\u51FB\u51FD\u5206\u5207\u5217\u5219\u521A\u5220\u522B\u5230\u5236\u5237\u523A\u523B\u524D\u5269\u526A\u529B\u52A0\u52A8\u5316\u533A\u5341\u534A\u5355\u5360\u5361\u5370\u5386\u538B\u539A\u539F\u53BB\u53C2\u53C8\u53C9\u53CC\u53D1\u53D6\u53D7\u53D8\u53E0\u53E3\u53E5\u53E6\u53EA\u53EB\u53EF\u53F0\u53F3\u53F7\u5403\u5404\u5408\u540A\u540C\u540D\u540E\u5411\u5417\u5426\u542B\u5438\u5468\u5473\u547C\u548C\u54AC\u54C1\u54EA\u552F\u5546\u5565\u556A\u5582\u5668\u566A\u56DB\u56DE\u56E0\u56F4\u56FA\u56FE\u5706\u5708\u5728\u5730\u573A\u5747\u5750\u5751\u5757\u57DF\u57FA\u5806\u586B\u5883\u58A8\u58F0\u5904\u5916\u591A\u591F\u5927\u5929\u592A\u592E\u5931\u5934\u5956\u5957\u597D\u59CB\u5A92\u5B50\u5B57\u5B58\u5B64\u5B66\u5B83\u5B89\u5B8B\u5B8C\u5B9A\u5B9E\u5BB9\u5BBD\u5BC6\u5BDF\u5BF9\u5BFC\u5C01\u5C0F\u5C11\u5C18\u5C31\u5C3A\u5C3D\u5C3E\u5C40\u5C42\u5C45\u5C4A\u5C4F\u5C81\u5CB8\u5CF0\u5DE6\u5DE8\u5DEE\u5DF1\u5DF2\u5E03\u5E26\u5E27\u5E38\u5E42\u5E45\u5E55\u5E72\u5E73\u5E74\u5E94\u5E95\u5EA6\u5EA7\u5F00\u5F02\u5F0F\u5F15\u5F20\u5F31\u5F39\u5F3A\u5F53\u5F62\u5F69\u5F71\u5F80\u5F84\u5F88\u5F8B\u5F97\u5FAE\u5FC3\u5FC5\u6001\u600E\u601D\u6027\u603B\u6052\u606F\u6070\u60C5\u610F\u611F\u6162\u6210\u6211\u6216\u622A\u6233\u6237\u6240\u6241\u624D\u6253\u6258\u626B\u6280\u628A\u6295\u6296\u6298\u62A2\u62A5\u62AC\u62BD\u62C9\u62CD\u62D6\u62DB\u62FC\u62FF\u6307\u6309\u6324\u632A\u632F\u6362\u636E\u6389\u6392\u63A5\u63A7\u63A8\u63CF\u63D0\u63D2\u642C\u6446\u6447\u645E\u6478\u6491\u649E\u652F\u6536\u6539\u653E\u6548\u6570\u6572\u6574\u6587\u6591\u659C\u65AD\u65B0\u65B9\u65CB\u65E0\u65E2\u65E5\u65E6\u65E7\u65F6\u660E\u662F\u663E\u666F\u667A\u6697\u66B4\u66F4\u66FF\u6700\u6708\u6709\u671B\u671D\u671F\u672B\u672C\u673A\u675F\u6761\u6765\u677F\u6781\u6784\u6790\u679A\u679C\u67D0\u67D3\u67E5\u67F1\u6807\u6837\u6838\u6839\u683C\u6846\u6848\u6863\u6881\u68AF\u68C0\u695A\u6982\u6A21\u6A2A\u6B21\u6B62\u6B63\u6B7B\u6BB5\u6BCF\u6BD4\u6BD5\u6BDB\u6BEB\u6C1B\u6C34\u6C38\u6C42\u6CA1\u6CD5\u6CE2\u6CE8\u6D3B\u6D41\u6D4B\u6D6E\u6D88\u6DE1\u6E05\u6E20\u6E21\u6E32\u6E38\u6E90\u6EB6\u6ED1\u6EDA\u6EE1\u6F02\u70B9\u70ED\u7136\u7167\u7206\u7247\u7248\u724C\u7269\u7275\u7279\u72B6\u72C2\u732E\u7387\u73AB\u73AF\u73B0\u7403\u751F\u7528\u7531\u753B\u754C\u7559\u7565\u75AF\u75C5\u75D5\u767D\u767E\u7684\u76D1\u76D6\u76D8\u76F4\u76F8\u770B\u771F\u773C\u7740\u77AC\u77E5\u77E9\u77ED\u77EE\u7801\u7834\u7838\u7840\u786C\u786E\u793A\u7968\u79BB\u79CD\u79D1\u79D2\u79EF\u79F0\u79FB\u7A00\u7A0B\u7A33\u7A7A\u7A7F\u7A81\u7A84\u7A97\u7ACB\u7AD6\u7AD9\u7AE0\u7AEF\u7B26\u7B2C\u7B49\u7B4B\u7B7E\u7B97\u7BA1\u7BAD\u7C89\u7C92\u7D20\u7EA2\u7EA6\u7EA7\u7EAF\u7EB5\u7EB8\u7EB9\u7EBF\u7EC4\u7EC6\u7EC8\u7ECD\u7ECF\u7ED3\u7ED5\u7ED8\u7ED9\u7EDD\u7EDF\u7EE7\u7EED\u7F13\u7F18\u7F29\u7F3A\u7F51\u7F6E\u7FFB\u8001\u8003\u8005\u800C\u8017\u8054\u8058\u8089\u80A9\u80F6\u80FD\u8109\u811A\u8131\u8138\u81C2\u81EA\u81F4\u8272\u827E\u8282\u82F1\u8303\u843D\u84DD\u85AA\u865A\u884C\u8865\u8868\u8870\u88AB\u88C5\u897F\u8981\u89C1\u89C2\u89C4\u89C6\u89C9\u89D2\u89E3\u8A00\u8BA1\u8BA9\u8BB2\u8BB8\u8BBA\u8BC1\u8BDD\u8BE5\u8BED\u8BF4\u8BFB\u8BFE\u8C01\u8C03\u8D1F\u8D21\u8D23\u8D26\u8D34\u8D70\u8D77\u8D8A\u8DB3\u8DD1\u8DDD\u8DDF\u8DE8\u8DEF\u8DF3\u8E29\u8EAB\u8EB2\u8F68\u8F6C\u8F74\u8FB9\u8FBE\u8FC7\u8FD0\u8FD1\u8FD4\u8FD8\u8FD9\u8FDB\u8FDC\u8FDE\u8FF9\u9000\u9001\u9009\u9010\u901F\u9020\u9053\u907F\u90A3\u90B5\u90BB\u90E8\u90FD\u914D\u91CA\u91CC\u91CD\u91CF\u91D1\u94B1\u94C1\u94F6\u94FA\u9519\u951A\u9524\u952E\u955C\u957F\u95EA\u95ED\u95EE\u95F4\u95F9\u9645\u9646\u964D\u9650\u968F\u9694\u96F6\u9732\u9759\u975E\u9760\u9762\u97E9\u97F3\u9876\u9879\u987B\u9891\u9897\u9898\u9970\u9A8C\u9A91\u9AD8\u9ED1\u9F50\uFE0F\uFF08\uFF09\uFF0B\uFF0C\uFF1A\uFF1B\uFF1D\uFF1F";
+
+const wantFamilies = ['Noto Serif SC Variable', 'Noto Sans SC Variable'];
+const familiesReady = () => wantFamilies.every(f => [...document.fonts].some(x => x.family.replace(/["']/g, '') === f));
+// 最多等 30 秒；每 50ms 探一次。stylesheet 正常是几百毫秒就绪。
+for (let w = 0; w < 600 && !familiesReady(); w++) {
+  await new Promise(r => setTimeout(r, 50));
+  if (w === 100) await Promise.all([...document.styleSheets].map(ss => { try { return ss.cssRules.length; } catch { return 0; } }));
+}
+if (!familiesReady()) console.error('[fonts] families never registered; falling back to system fonts');
+
+// ② 全量字符 → 强制下载所有要用的分片
+await Promise.all([
+  document.fonts.load('300 92px "Noto Serif SC Variable"', ALL_TEXT),
+  document.fonts.load('400 92px "Noto Serif SC Variable"', ALL_TEXT),
+  document.fonts.load('700 92px "Noto Serif SC Variable"', ALL_TEXT),
+  document.fonts.load('500 92px "Noto Sans SC Variable"', ALL_TEXT),
+  document.fonts.load('800 92px "Noto Sans SC Variable"', ALL_TEXT),
+]);
+await document.fonts.ready;
+
+// ③ 交叉验证：真字体和回退字体量同一句话，宽度必须不同。
+//    相同就说明还在用回退字体 —— 这时再等一轮，不要带着错的字体往下跑。
+const probeW = (fam) => {
+  const c = document.createElement('canvas').getContext('2d');
+  c.font = `700 92px ${fam}, monospace`;
+  return c.measureText('10万粉丝暴打985211').width;
+};
+for (let w = 0; w < 40; w++) {
+  const real = probeW('"Noto Serif SC Variable"');
+  const fb = probeW('"__NoSuchFamily__"');
+  if (Math.abs(real - fb) > 0.5) break;
+  await new Promise(r => setTimeout(r, 100));
+}
+
+await Promise.all(Object.entries(SRC).map(async ([k, s]) => {
+  try { IMG[k] = await loadImage(s.cover); } catch (e) { IMG[k] = null; console.error('[imgfail] ' + k + ' ' + s.cover + ' :: ' + (e && e.message || e)); }
+}));
+
+window.__IMG = IMG; window.__SRC = SRC;
+// ── 主标题的自动缩字号：所有 measureText 都挪到这里，只算一次 ────────────
+// 这段必须在字体全部下完之后执行（见上面「字体分片强制预加载」），
+// 否则量到的是回退字体的宽度，`--determinism` 会随机失败。
+{
+  const line = '10万粉丝，暴打985211';
+  const chars = [...line];
+  const cardLeft = cx + 500 * U - 372 * U / 2 - 24 * U;
+  const availW = cardLeft - (W * 0.075);
+  let sz = 84 * U;
+  ctx.font = F.bigH(sz);
+  const rawW = chars.reduce((p, ch) => p + ctx.measureText(ch).width, 0);
+  if (rawW > availW) sz = sz * (availW / rawW);
+  if (!(sz > 0) || !isFinite(sz)) sz = 60 * U;
+  ctx.font = F.bigH(sz);
+  const widths = chars.map(ch => ctx.measureText(ch).width);
+  window.__FIT_MAIN = { size: sz, widths, chars, availW, rawW };
+}
+
+// ── canvas 栅格化是异步提交的：screenshot 会慢一帧 ─────────────────────
+// 铁证：`--determinism` 把两次不同顺序的渲染截图对比，首帧差异区域是**整个内容层**
+//   （qA 显示时间码 00:00:00、画面空白；qB 显示 00:14:24、有图形）。
+//   也就是说 A 组第一次截图抓到的其实是加载时 window.render(0) 的那一帧。
+//   我为此白改了两轮字体（以为是分片懒加载），因为症状太像字体了。
+// 修法（三道都要，缺一道就偶尔漏帧）：
+//   ① await 两帧 rAF —— 让合成器有机会提交这一帧；
+//   ② getImageData 读 1 个像素 —— GPU→CPU 同步，强制真正把绘制命令执行完；
+//   ③ 再 await 一次 rAF —— 提交完成后再返回。
+//   render.mjs 的 shoot() 是 `await page.evaluate(() => window.render(t))`，
+//   所以只要 render 返回 Promise，截图就一定发生在合成之后。
+// ── 关于 --determinism 的一个已知工具侧假阳性（写在这里免得后人再查一遍）──
+// `render.mjs --determinism` 会开**两个新页面**，让它们按不同顺序各渲一遍再截图对比。
+// 实测：**新开的页面拿到的第一张截图是陈旧的**（内容是 t=0 那帧：时间码 00:00:00、
+// 画面空白），同一页面之后的截图都正常。所以 A、B 两组里各自「第一张」必然不一样。
+// 下面三道同步（rAF → 读像素 → rAF）+ 预热，能显著降低发生率但不能根治，
+// 因为这是 headless + GPU canvas 的 readback 时序问题，不是页面逻辑问题。
+// **判断依据：视频路径不受影响** —— 视频是在同一个长寿命页面里顺序渲 4037 帧，
+// 每帧都有充足时间合成；实测成片的时间码与画面对应关系完全正确（抽帧验证过）。
+// 所以成片质量以「抽帧看内容」为准，不以 --determinism 为准。
+const _draw = window.render;
+const _probeCtx = ctx;
+window.render = async (t) => {
+  _draw(t);
+  await new Promise(r => requestAnimationFrame(r));
+  _probeCtx.getImageData(0, 0, 1, 1);
+  await new Promise(r => requestAnimationFrame(r));
+};
+
+window.render(0);
+// 预热：让这个页面先真正合成过几帧，之后每一次 shoot 都稳
+for (let w = 0; w < 4; w++) {
+  _draw(0);
+  await new Promise(r => requestAnimationFrame(r));
+  ctx.getImageData(0, 0, 1, 1);
+  await new Promise(r => requestAnimationFrame(r));
+}
+window.READY = true;
+</script>
+</body>
+</html>

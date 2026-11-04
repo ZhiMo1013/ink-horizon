@@ -1,0 +1,35 @@
+# 依赖
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# 构建与运行产物
+dist/
+*.zip
+qa/stills/
+qa/*.png
+out/
+audio/*.wav
+renders/
+
+# 素材缺口占位目录（每台机器自己放）
+assets/starter/ref/voice/*.wav
+assets/starter/ref/covers/*.jpg
+assets/starter/ref/bgm.m4a
+
+# 系统
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+*.tmp
+*.bak
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 编辑器
+.vscode/
+.idea/

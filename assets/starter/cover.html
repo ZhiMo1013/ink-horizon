@@ -1,0 +1,784 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>cover</title>
+<style>
+  @import url(fonts/cjk/noto-serif-sc.css);
+  @import url(fonts/cjk/noto-sans-sc.css);
+  @font-face { font-family:"Latin"; src:url(fonts/CormorantGaramond.ttf); font-weight:300 700; }
+  @font-face { font-family:"Mono";  src:url(fonts/JetBrainsMono.ttf); font-weight:100 800; }
+  html, body { margin:0; background:#07080A; overflow:hidden; }
+  canvas { display:block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script type="module">
+import { stageSize, setupCanvas } from './motion.js';
+
+const Q = new URLSearchParams(location.search);
+const { W, H } = stageSize();
+const ctx = setupCanvas(document.getElementById('c'), W, H);
+const VERT = H > W;
+const V = Q.get('v') || 'a';
+
+const C = {
+  ink:    '#07080A',
+  paper:  '#ECE7DC',
+  paper2: '#9C978C',
+  dim:    '#4A4740',
+  gold:   '#E8C77E',
+  goldHi: '#FFE7B0',
+  rose:   '#E2466B',
+  ice:    '#6FD7EA',
+};
+const F = {
+  big:   s => `300 ${s}px "Noto Serif SC Variable", serif`,
+  bigH:  s => `700 ${s}px "Noto Serif SC Variable", serif`,
+  sub:   s => `400 ${s}px "Noto Serif SC Variable", serif`,
+  sans:  s => `500 ${s}px "Noto Sans SC Variable", sans-serif`,
+  sansH: s => `800 ${s}px "Noto Sans SC Variable", sans-serif`,
+  mono:  s => `400 ${s}px "Mono", monospace`,
+};
+
+function txt(s, x, y, { font, color = C.paper, a = 1, track = 0, align = 'center', glow = 0, glowColor } = {}) {
+  if (a <= 0.002) return 0;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.font = font; ctx.fillStyle = color; ctx.textBaseline = 'alphabetic';
+  if (glow > 0) { ctx.shadowBlur = glow; ctx.shadowColor = glowColor || color; }
+  let w;
+  if (track === 0) {
+    ctx.textAlign = align; ctx.fillText(s, x, y); w = ctx.measureText(s).width;
+  } else {
+    const chars = [...s], ws = chars.map(ch => ctx.measureText(ch).width);
+    const total = ws.reduce((p, v) => p + v, 0) + track * (chars.length - 1);
+    let px = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+    ctx.textAlign = 'left';
+    chars.forEach((ch, i) => { ctx.fillText(ch, px, y); px += ws[i] + track; });
+    w = total;
+  }
+  ctx.restore();
+  return w;
+}
+
+function person(x, baseY, h, { a = 1, color = C.paper } = {}) {
+  if (a <= 0.002) return;
+  ctx.save();
+  ctx.globalAlpha = a; ctx.fillStyle = color;
+  const headR = h * 0.16, bodyH = h * 0.62, bodyW = h * 0.30;
+  ctx.beginPath(); ctx.arc(x, baseY - bodyH - headR * 0.9, headR, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x - bodyW * 0.5, baseY);
+  ctx.quadraticCurveTo(x - bodyW * 0.56, baseY - bodyH * 0.62, x - bodyW * 0.42, baseY - bodyH * 0.92);
+  ctx.quadraticCurveTo(x, baseY - bodyH * 1.06, x + bodyW * 0.42, baseY - bodyH * 0.92);
+  ctx.quadraticCurveTo(x + bodyW * 0.56, baseY - bodyH * 0.62, x + bodyW * 0.5, baseY);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// 墨环台标（小尺寸，只做署名，不抢画面）
+// bold：头像专用。缩到 48px 时细线会全部糊掉，只剩一团灰 ——
+// 头像必须在「缩放后仍然认得出」，所以笔画按 R 的比例放大一倍。
+// 墨环台标
+// bold：头像专用。缩到 48px 时细线全糊成一团灰，所以笔画按比例放大。
+// 关键（踩过两次）：
+//   ① 刻度必须**贴着内壁**。第一版刻度浮在半径中段，看起来是一圈散落的小棍，
+//      读不出「刻度环」；贴到内壁之后才像一个仪器的度盘。
+//   ② 光环（外圈那层淡边）在 bold 下会被一起放大成一大坨灰，
+//      所以它只在 bold=1（片内署名）时出现，头像不要。
+function mark(mx, my, R, labelSize, withText = true, bold = 1) {
+  const GAP = 0.30;
+  const A0 = -Math.PI * 0.62, A1 = A0 + Math.PI * 2 - GAP;
+  const rw = R * 0.155 * bold;          // 主环线宽
+  const rIn = R - rw * 0.5;             // 主环内缘
+
+  // ① 主环（不闭合，带一点墨的不规则）
+  ctx.save();
+  ctx.beginPath();
+  for (let i = 0; i <= 72; i++) {
+    const th = A0 + (A1 - A0) * (i / 72);
+    const k = 1 + 0.030 * Math.sin(th * 3 + 1.1);
+    const px = mx + Math.cos(th) * R * k, py = my + Math.sin(th) * R * k;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  }
+  ctx.strokeStyle = 'rgba(247,243,234,.94)';
+  ctx.lineWidth = rw; ctx.lineCap = 'round';
+  ctx.stroke();
+  // 两个末端各一点墨渍
+  [A0, A1].forEach((th, i) => {
+    ctx.globalAlpha = i === 0 ? 0.6 : 0.38;
+    ctx.fillStyle = '#F7F3EA';
+    ctx.beginPath();
+    ctx.arc(mx + Math.cos(th) * R, my + Math.sin(th) * R, 0.095 * R * Math.sqrt(bold), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+
+  // ② 光环：只有片内小尺寸时才画（头像加了会糊成一坨）
+  if (bold <= 1.05) {
+    ctx.save();
+    ctx.beginPath();
+    for (let i = 0; i <= 72; i++) {
+      const th = A0 + (A1 - A0) * (i / 72);
+      const k = 1 + 0.055 * Math.sin(th * 3 + 1.1) + 0.035 * Math.sin(th * 5 - 0.6);
+      const px = mx + Math.cos(th) * R * 1.22 * k, py = my + Math.sin(th) * R * 1.22 * k;
+      i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+    }
+    ctx.strokeStyle = 'rgba(240,235,224,.20)';
+    ctx.lineWidth = R * 0.30; ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ③ 内壁刻度：从环内缘往里量，长 3 根、短 8 根（12 等分）
+  ctx.save();
+  ctx.strokeStyle = C.gold; ctx.lineCap = 'butt';
+  for (let i = 0; i < 12; i++) {
+    const th = A0 + (A1 - A0) * (i / 11);
+    const long = i % 3 === 0;
+    const r0 = rIn - rw * 0.10;                       // 贴着内缘
+    const r1 = rIn - (long ? 0.20 : 0.115) * R;       // 往圆心方向量
+    ctx.globalAlpha = long ? 0.95 : 0.60;
+    ctx.lineWidth = (long ? 0.048 : 0.032) * R * Math.min(bold, 1.6);
+    ctx.beginPath();
+    ctx.moveTo(mx + Math.cos(th) * r0, my + Math.sin(th) * r0);
+    ctx.lineTo(mx + Math.cos(th) * r1, my + Math.sin(th) * r1);
+    ctx.stroke();
+  }
+  // ④ 圆心
+  ctx.globalAlpha = 0.95; ctx.fillStyle = C.gold;
+  ctx.beginPath(); ctx.arc(mx, my, 0.075 * R * Math.sqrt(bold), 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  if (!withText) return R * 2.4;
+  const tx = mx + R * 1.66;
+  const w1 = txt('墨点视界', tx, my + labelSize * 0.34,
+                 { font: F.bigH(labelSize), color: C.paper, a: 0.92, align: 'left', track: labelSize * 0.07 });
+  const lx = tx + w1 + labelSize * 0.44;
+  ctx.save(); ctx.globalAlpha = 0.42;
+  ctx.strokeStyle = C.gold; ctx.lineWidth = Math.max(1, R * 0.072);
+  ctx.beginPath(); ctx.moveTo(lx, my - labelSize * 0.42); ctx.lineTo(lx, my + labelSize * 0.38); ctx.stroke();
+  ctx.restore();
+  txt('INK HORIZON', lx + labelSize * 0.40, my + labelSize * 0.28,
+      { font: F.mono(labelSize * 0.46), color: C.dim, a: 0.70, align: 'left', track: labelSize * 0.11 });
+}
+
+function bg() {
+  ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H);
+  const rg = ctx.createRadialGradient(W * 0.5, H * 0.46, 0, W * 0.5, H * 0.46, Math.max(W, H) * 0.70);
+  rg.addColorStop(0, 'rgba(36,38,46,.50)');
+  rg.addColorStop(1, 'rgba(7,8,10,0)');
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+}
+
+// 底部细线刻度条（参考片的手写小记号，只用一次）
+// 先量出「两段字合并铺满 targetW」时第一段该多大（不画）
+function pairSize(s1, s2, { targetW, gap, k }) {
+  ctx.save();
+  ctx.font = F.bigH(100); const w1 = ctx.measureText(s1).width;
+  ctx.font = F.bigH(100); const w2 = ctx.measureText(s2).width;
+  ctx.restore();
+  return (targetW - gap) / Math.max(1, w1 + w2 * k) * 100;
+}
+
+// 按给定字号画「大数字 + 小字」一行（左对齐，起点 x）
+function drawPair(s1, s2, x, y, { fontFn1, fontFn2, size1, k, gap, color, glow, glowColor }) {
+  const s2size = size1 * k;
+  const w1 = txt(s1, x, y, { font: fontFn1(size1), color, align: 'left', glow, glowColor });
+  txt(s2, x + w1 + gap, y, { font: fontFn2(s2size), color, align: 'left', glow, glowColor });
+}
+
+function rule(x, y, w, a = 0.5) {
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.fillStyle = C.gold; ctx.fillRect(x, y, w, Math.max(1.4, H / 700));
+  ctx.restore();
+}
+
+// 把一段字按「目标宽度」等比放大/缩小 —— 版式不用再手写坐标。
+// 理由：手写坐标每次换字号就要重算，我这一版已经因为硬编码「万粉」的 x
+// 中间空出一大片。让宽度来驱动字号，右侧就不会再留死空。
+function fitText(s, x, y, { fontFn, targetW, maxSize, color = C.paper, align = 'left', track = 0, glow = 0, glowColor }) {
+  // ⚠️ 探宽必须把 track 算进去。
+  //    之前只用 measureText(s).width —— 那是"零字间距"的宽度，
+  //    实际排出来还要多出 track*(字数-1)。中文标题动辄多 40–60px，
+  //    于是每次都超出去一点，slogan 的末尾就被画框切掉。
+  //    track 是绝对像素、不随字号缩放，所以换算时要先把它减掉再求字号。
+  const probe = fontFn(100);             // 用 100px 探宽，再线性换算
+  ctx.save();
+  ctx.font = probe;
+  const w100 = ctx.measureText(s).width;
+  ctx.restore();
+  const n = [...s].length;
+  const trackFix = track * Math.max(0, n - 1);   // 字间距总量（与字号无关）
+  let size = Math.min(maxSize, ((targetW - trackFix) / Math.max(1, w100)) * 100);
+  if (!(size > 1)) size = maxSize;
+  const w = txt(s, x, y, { font: fontFn(size), color, align, track, glow, glowColor });
+  return { size, w };
+}
+
+// 一行里两段字（「310」+「万粉」）合并铺满目标宽度（左对齐）
+function fitPair(s1, s2, x, y, { fontFn1, fontFn2, targetW, gap, maxSize1, color, glow, glowColor, track = 0 }) {
+  ctx.save();
+  ctx.font = fontFn1(100); const w1h = ctx.measureText(s1).width;
+  ctx.font = fontFn2(100); const w2h = ctx.measureText(s2).width;
+  ctx.restore();
+  // 两段按同一比例缩放，比例由「总宽 = 目标宽」反推
+  const k = (targetW - gap) / Math.max(1, w1h + w2h * 0.40);   // 第二段字号本来就更小
+  let s1size = Math.min(maxSize1, 100 * k);
+  if (!(s1size > 1)) s1size = maxSize1;
+  const s2size = s1size * 0.40;
+  const w1 = txt(s1, x, y, { font: fontFn1(s1size), color, align: 'left', track, glow, glowColor });
+  txt(s2, x + w1 + gap, y, { font: fontFn2(s2size), color, align: 'left', glow, glowColor });
+  return { size: s1size, w1 };
+}
+
+// 两段字合并居中（竖版用）—— 先量总宽再算起点，避免 left/center 混杂
+function drawCenteredPair(s1, s2, cx, y, { fontFn1, fontFn2, totalW, gap, k, max1, color, glow, glowColor }) {
+  ctx.save();
+  ctx.font = fontFn1(100); const w1h = ctx.measureText(s1).width;
+  ctx.font = fontFn2(100); const w2h = ctx.measureText(s2).width;
+  ctx.restore();
+  let s1size = Math.min(max1, (totalW - gap) / Math.max(1, w1h + w2h * k) * 100);
+  if (!(s1size > 1)) s1size = max1;
+  const s2size = s1size * k;
+  ctx.save();
+  ctx.font = fontFn1(s1size);
+  const w1 = ctx.measureText(s1).width;
+  ctx.font = fontFn2(s2size);
+  const w2 = ctx.measureText(s2).width;
+  ctx.restore();
+  const x0 = cx - (w1 + gap + w2) / 2;
+  txt(s1, x0, y, { font: fontFn1(s1size), color, align: 'left', glow, glowColor });
+  txt(s2, x0 + w1 + gap, y, { font: fontFn2(s2size), color, align: 'left', glow, glowColor });
+}
+
+// 右下角署名
+// ⚠️ 原来把圆环放在 W-62、文字往右排 —— 文字直接出画，标题被切掉。
+//    现在先量出「环 + 文字」的总宽，再按右缘反推起点，保证整枚标记都在画内。
+// ⚠️⚠️ 第二版还是被切：量宽时没算 `track`（字间距）。
+//    `txt()` 走 track 分支时，总宽 = 各字宽之和 + track*(字数-1)，
+//    漏掉这一项就少算了 ~50px，右端刚好被推出画外。
+//    下面用一个和 txt() 完全一致的量宽函数，杜绝两边算法不一致。
+function measureTracked(s, font, track) {
+  ctx.save();
+  ctx.font = font; ctx.textAlign = 'left';
+  let w;
+  if (track === 0) w = ctx.measureText(s).width;
+  else {
+    const chars = [...s];
+    w = chars.reduce((p, ch) => p + ctx.measureText(ch).width, 0) + track * (chars.length - 1);
+  }
+  ctx.restore();
+  return w;
+}
+
+function bottomMark() {
+  const R = (VERT ? W * 0.030 : H * 0.023);
+  const labelSize = R * 1.24;
+  const padR = VERT ? 58 : 72;
+  const padB = VERT ? 96 : 66;
+
+  const wName = measureTracked('\u58a8\u70b9\u89c6\u754c', F.bigH(labelSize), labelSize * 0.07);
+  const wEn = measureTracked('INK HORIZON', F.mono(labelSize * 0.46), labelSize * 0.11);
+  const totalW = R * 1.66 + wName + labelSize * 0.44 + labelSize * 0.40 + wEn;
+
+  const mx = W - padR - totalW + R;      // 反推圆环圆心，使整枚标记右缘落在 padR 处
+  const my = H - padB;
+  mark(mx, my, R, labelSize, true);
+}
+
+// 右半幅的视觉填充：**只放图形，不放字**
+// 内容上它是「310 万粉」的具象 —— 一片往下淌的金色小人，
+// 越靠右越稀、越淡，暗示这个数量级不是一个数字，是很多很多个具体的人。
+// 密度用确定性伪随机（mulberry32）保证每次渲染一致。
+function fanField(x0, y0, w, h) {
+  const rnd = mulberry32(20261104);
+  const N = 96;
+  for (let i = 0; i < N; i++) {
+    const u = rnd();                        // 横向 0→1
+    const v = rnd();                        // 纵向 0→1
+    const px = x0 + u * w;
+    const py = y0 + v * h;
+    // 越靠右下越稀：靠右侧概率性丢弃
+    if (u > 0.55 && rnd() < (u - 0.55) * 1.45) continue;
+    const hh = (26 + rnd() * 30) * (VERT ? W / 1080 : H / 1080);
+    const al = (0.10 + rnd() * 0.20) * (1 - u * 0.45);
+    person(px, py, hh, { color: C.gold, a: al });
+  }
+}
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// ══════════════════════════════════════════════════════
+//  A · 数字当主角
+//
+//  叙事顺序（被用户点过，原来反了）：
+//    ① 他说的话 —— 引语在最上面，直接当钩子
+//    ② 这话是他说的 —— 交代出处
+//    ③ 他自己就站在 —— 转折（**不加逗号**：加了像停顿，读起来是断的）
+//    ④ 310 万粉 —— 落点。数字必须最后出现，它才是包袱
+//  原来把 310 万放在中间、引语压在下半屏，等于把包袱提前抖了。
+// ══════════════════════════════════════════════════════
+function variantA() {
+  const S = VERT ? W / 1080 : H / 1080;
+  bg();
+  const cx = VERT ? W * 0.5 : W * 0.5;
+
+  if (VERT) {
+    // 竖版：叙事顺序相同，纵向铺开。同样**自下而上**定位，
+    // 并且让「310 万粉」占到画幅大半 —— 竖版在信息流里是缩略图，
+    // 数字必须一眼可读，不能靠小字。
+    const VW = W * 0.90;
+    const VX = (W - VW) / 2;
+
+    const NUM_BASE = 1420 * S;
+    const numSize = Math.min(620 * S, pairSize('310', '\u4e07\u7c89', { targetW: VW, gap: 30 * S, k: 0.40 }));
+    ctx.save(); ctx.font = F.bigH(numSize);
+    const numAsc = ctx.measureText('310').actualBoundingBoxAscent;
+    ctx.restore();
+    const numTop = NUM_BASE - numAsc;
+
+    const labY = numTop - 56 * S;
+    txt('\u4ed6\u81ea\u5df1\u5c31\u7ad9\u5728', W * 0.5, labY,
+        { font: F.sub(64 * S), color: C.paper2, align: 'center', track: 5 * S });
+    rule(W * 0.5 - W * 0.30, labY - 96 * S, W * 0.60, 0.45);
+
+    // 引语与出处：占上半屏
+    fitText('\u300c10 \u4e07\u7c89\u66b4\u6253 985211\u300d', W * 0.5, 620 * S,
+        { fontFn: F.bigH, targetW: W * 0.88, maxSize: 92 * S, color: C.paper, align: 'center', track: 2 * S });
+    txt('\u8fd9\u8bdd\u662f\u4ed6\u8bf4\u7684', W * 0.5, 712 * S,
+        { font: F.sub(42 * S), color: C.dim, align: 'center', track: 8 * S });
+
+    drawPair('310', '\u4e07\u7c89', VX, NUM_BASE,
+        { fontFn1: F.bigH, fontFn2: F.bigH, size1: numSize, k: 0.40, gap: 30 * S,
+          color: C.gold, glow: 74 * S, glowColor: 'rgba(232,199,126,.50)' });
+
+    const baseY = 1700 * S;
+    for (let i = 0; i < 14; i++) person(W * 0.5 - 300 * S + i * 46 * S, baseY, 56 * S, { color: C.gold, a: 0.30 });
+    bottomMark();
+  } else {
+    // ── 回到之前那版（你指的那一版）────────────────────────
+    // 左对齐、纵向四段：引语 / 出处 / 转折句 / 数字。数字 300 上下，
+    // 占画幅左半，右侧留给留白和气氛小人 —— 不追求铺满。
+    const LX = 128 * S;
+    const COLW = 1000 * S;
+
+    fitText('\u300c10 \u4e07\u7c89\u66b4\u6253 985211\u300d', LX, 322 * S,
+        { fontFn: F.bigH, targetW: COLW, maxSize: 96 * S, color: C.paper, track: 2 * S });
+    txt('\u8fd9\u8bdd\u662f\u4ed6\u8bf4\u7684', LX + 4 * S, 414 * S,
+        { font: F.sub(38 * S), color: C.dim, align: 'left', track: 9 * S });
+
+    rule(LX, 486 * S, COLW, 0.45);
+
+    txt('\u4ed6\u81ea\u5df1\u5c31\u7ad9\u5728', LX + 4 * S, 628 * S,
+        { font: F.sub(58 * S), color: C.paper2, align: 'left', track: 4 * S });
+
+    drawPair('310', '\u4e07\u7c89', LX, 918 * S,
+        { fontFn1: F.bigH, fontFn2: F.bigH, size1: 300 * S, k: 0.40, gap: 26 * S,
+          color: C.gold, glow: 44 * S, glowColor: 'rgba(232,199,126,.42)' });
+
+    // 右半幅：只放图形（不用文字）
+    fanField(W * 0.545, H * 0.10, W * 0.395, H * 0.80);
+    bottomMark();
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  B · 纯文字（诺贝尔公告那种，一张只有字）
+// ══════════════════════════════════════════════════════
+function variantB() {
+  const S = VERT ? W / 1080 : H / 1080;
+  bg();
+  const cx = W * 0.5;
+
+  if (VERT) {
+    txt('2 0 2 6', cx, 430 * S, { font: F.mono(46 * S), color: C.dim, align: 'center', track: 12 * S });
+    txt('一 个 中 国 观 众 的 问 题', cx, 520 * S, { font: F.sub(44 * S), color: C.paper2, align: 'center', track: 2 * S });
+    rule(cx - 60 * S, 600 * S, 120 * S, 0.6);
+
+    txt('10 万粉丝', cx, 810 * S, { font: F.bigH(150 * S), color: C.gold, align: 'center', glow: 44 * S, glowColor: 'rgba(232,199,126,.50)' });
+    txt('真的', cx, 900 * S, { font: F.sub(64 * S), color: C.paper2, align: 'center', track: 14 * S });
+    txt('大于', cx, 1040 * S, { font: F.bigH(120 * S), color: C.paper, align: 'center', track: 10 * S });
+    txt('985211 ?', cx, 1200 * S, { font: F.bigH(150 * S), color: C.paper, align: 'center', track: 4 * S });
+
+    txt('一个 310 万粉的人说：大于。', cx, 1420 * S, { font: F.sub(52 * S), color: C.dim, align: 'center', track: 2 * S });
+    bottomMark();
+  } else {
+    txt('2 0 2 6', cx, 214 * S, { font: F.mono(38 * S), color: C.dim, align: 'center', track: 12 * S });
+    txt('一 个 中 国 观 众 的 问 题', cx, 292 * S, { font: F.sub(38 * S), color: C.paper2, align: 'center', track: 2 * S });
+    rule(cx - 54 * S, 350 * S, 108 * S, 0.6);
+
+    txt('10 万粉丝，真的大于 985211 吗？', cx, 560 * S,
+        { font: F.bigH(104 * S), color: C.paper, align: 'center', track: 2 * S });
+    txt('一个 310 万粉的人说：大于。', cx, 690 * S,
+        { font: F.sub(52 * S), color: C.gold, align: 'center', track: 3 * S });
+
+    txt('但他自己，站在 310 万那一头。', cx, 800 * S,
+        { font: F.sub(46 * S), color: C.dim, align: 'center', track: 3 * S });
+    bottomMark();
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  C · 高度对比（4 个人 vs 一群人，差 3 倍）
+// ══════════════════════════════════════════════════════
+function variantC() {
+  const S = VERT ? W / 1080 : H / 1080;
+  bg();
+  const cx = W * 0.5;
+
+  if (VERT) {
+    txt('同一把尺子', cx, 330 * S, { font: F.sub(50 * S), color: C.paper2, align: 'center', track: 8 * S });
+    txt('量出两种答案', cx, 430 * S, { font: F.sub(50 * S), color: C.paper2, align: 'center', track: 8 * S });
+
+    const baseY = 1180 * S;
+    const hW = 330 * S, wW = hW * 0.30, gW = 100 * S;
+    const wSpan = 3 * gW + wW;
+    const wL = cx - 60 * S - wSpan;
+    for (let i = 0; i < 4; i++) person(wL + i * gW, baseY, hW, { color: C.paper });
+
+    const hF = 88 * S, fW = hF * 0.30, gF = 28 * S;
+    const fL = cx + 40 * S;
+    for (let i = 0; i < 12; i++) person(fL + i * gF, baseY, hF, { color: C.gold, a: 0.92 });
+
+    // 高度差虚线
+    ctx.save();
+    ctx.setLineDash([11 * S, 14 * S]);
+    ctx.strokeStyle = 'rgba(226,70,107,.60)'; ctx.lineWidth = 2.6 * S;
+    ctx.beginPath();
+    ctx.moveTo(wL - wW * 0.6, baseY - hW);
+    ctx.lineTo(fL + 11 * gF + fW + 40 * S, baseY - hW);
+    ctx.stroke();
+    ctx.restore();
+    txt('3 倍', fL + 11 * gF + fW + 46 * S, baseY - hW - 18 * S, { font: F.bigH(48 * S), color: C.rose, align: 'right' });
+
+    // 两端标注
+    txt('985', wL + wSpan * 0.5, baseY - hW - 30 * S, { font: F.mono(40 * S), color: C.paper2, align: 'center', track: 5 * S });
+    txt('10 万粉', fL + 5.5 * gF, baseY + 62 * S, { font: F.mono(38 * S), color: C.gold, align: 'center', track: 2 * S });
+
+    // 大字压底部
+    txt('高度差，就是含金量吗？', cx, 1520 * S, { font: F.bigH(66 * S), color: C.paper, align: 'center', track: 2 * S });
+    bottomMark();
+  } else {
+    txt('同 一 把 尺 子 · 两 种 答 案', cx, 176 * S, { font: F.sub(40 * S), color: C.paper2, align: 'center', track: 2 * S });
+
+    const baseY = 872 * S;
+    const hW = 250 * S, wW = hW * 0.30, gW = 96 * S;
+    const wSpan = 3 * gW + wW;
+    const wL = 400 * S;
+    for (let i = 0; i < 4; i++) person(wL + i * gW, baseY, hW, { color: C.paper });
+
+    const hF = 84 * S, fW = hF * 0.30, gF = 29 * S;
+    const fL = 1210 * S;
+    for (let i = 0; i < 12; i++) person(fL + i * gF, baseY, hF, { color: C.gold, a: 0.92 });
+
+    ctx.save();
+    ctx.setLineDash([9 * S, 12 * S]);
+    ctx.strokeStyle = 'rgba(226,70,107,.60)'; ctx.lineWidth = 2.2 * S;
+    ctx.beginPath();
+    ctx.moveTo(wL - wW * 0.6, baseY - hW);
+    ctx.lineTo(fL + 11 * gF + fW + 34 * S, baseY - hW);
+    ctx.stroke();
+    ctx.restore();
+    txt('3 倍', fL + 11 * gF + fW + 38 * S, baseY - hW - 14 * S, { font: F.bigH(38 * S), color: C.rose, align: 'right' });
+
+    txt('985', wL + wSpan * 0.5, baseY + 62 * S, { font: F.mono(30 * S), color: C.paper2, align: 'center', track: 4 * S });
+    txt('10 万粉', fL + 5.5 * gF, baseY + 62 * S, { font: F.mono(28 * S), color: C.gold, align: 'center', track: 2 * S });
+
+    txt('高度差，就是含金量吗？', cx, 250 * S, { font: F.bigH(76 * S), color: C.paper, align: 'center', track: 2 * S });
+    bottomMark();
+  }
+}
+
+// ══════════════════════════════════════════════════════
+//  D · 头像（正方形，只有墨环）
+// ══════════════════════════════════════════════════════
+function variantD() {
+  const S = Math.min(W, H) / 1080;
+  const cx = W * 0.5, cy = H * 0.5;
+  bg();
+  // 头像只有一个元素，所以要大、要居中、要经得起缩到 48px
+  // bold=2.0：笔画加倍。缩到 48px 时线宽还剩约 2px，仍然读得出「一个不闭合的环」。
+  const R = Math.min(W, H) * 0.30;
+  mark(cx, cy, R, 0, false, 2.0);
+  const rg = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 2.0);
+  rg.addColorStop(0, 'rgba(232,199,126,.05)');
+  rg.addColorStop(1, 'rgba(232,199,126,0)');
+  ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+}
+
+// ══════════════════════════════════════════════════════
+//  E · 头像（墨环 + 下方两字，横排缩略图也能认）
+// ══════════════════════════════════════════════════════
+function variantE() {
+  const S = Math.min(W, H) / 1080;
+  const cx = W * 0.5;
+  bg();
+  // ⚠️ 文字必须在画面内：第一版 cy=H*0.44 + R*2.55 直接算出画外去了。
+  //    现在反过来算 —— 先定文字位置，再让环去凑它。
+  const R = Math.min(W, H) * 0.215;
+  const cy = H * 0.405;
+  mark(cx, cy, R, 0, false, 1.5);
+  txt('墨点视界', cx, H * 0.775, { font: F.bigH(92 * S), color: C.paper, align: 'center', track: 10 * S });
+  txt('INK HORIZON', cx, H * 0.845, { font: F.mono(32 * S), color: C.dim, align: 'center', track: 12 * S });
+}
+
+// ══════════════════════════════════════════════════════
+//  F · 空间头图（B站 1920×480 / 通用横幅）
+//
+//  横幅的读法和小封面不一样：它很扁，观众是从左往右扫的，
+//  而且头像会压在左下角 —— 所以左边留空，内容从左边 1/4 处起。
+//  构图：
+//    · 左侧 1/4：空（头像会盖在这里）
+//    · 中间：墨环 + 名字 + 一句 slogan
+//    · 右侧：人形图阵（延续封面 A 的元素，形成系列感）
+//    · 底部一条极淡的刻度线，像仪器的基座
+// ══════════════════════════════════════════════════════
+function variantF() {
+  const S = H / 480;                    // 以 480 高为准
+  bg();
+
+  // 抖音的裁剪框约 17:6（2.83:1），比 4:1 更方 —— 原来的图被裁掉右半边，
+  // slogan 直接切在画面外。所以这里所有横向尺寸都要按**可用宽度**算，不能写死比例。
+  const wide = W / H;                   // 4.0 = B站横图；2.83 = 抖音
+  const R = H * (wide > 3.4 ? 0.150 : 0.175);
+  const mx = W * (wide > 3.4 ? 0.275 : 0.205), my = H * 0.375;
+  mark(mx, my, R, 0, false, 1.35);
+
+  const tx = mx + R * 1.80;
+  const nameSize = H * (wide > 3.4 ? 0.150 : 0.170);
+  const nameBase = my + nameSize * 0.30;
+  txt('墨点视界', tx, nameBase,
+      { font: F.bigH(nameSize), color: C.paper, align: 'left', track: nameSize * 0.07 });
+
+  const enBase = nameBase + H * (wide > 3.4 ? 0.115 : 0.135);
+  txt('INK HORIZON', tx + 3 * S, enBase,
+      { font: F.mono(H * 0.050), color: C.dim, align: 'left', track: H * 0.020 });
+
+  const ruleY = enBase + H * 0.085;
+  ctx.save();
+  ctx.globalAlpha = 0.34; ctx.fillStyle = C.gold;
+  ctx.fillRect(tx + 3 * S, ruleY, W * 0.045, Math.max(1, H * 0.004));
+  ctx.restore();
+
+  // slogan：**按剩余宽度自动缩字号**，保证永远不出框
+  const sloganX = tx + 3 * S;
+  const availW = W * 0.955 - sloganX;
+  fitText('用未曾见过的画面，讲未曾想清楚的问题',
+      sloganX, ruleY + H * 0.115,
+      { fontFn: F.sub, targetW: availW, maxSize: H * 0.070,
+        color: C.paper2, align: 'left', track: H * 0.011 });
+
+  // 右侧人形图阵：窄幅时收窄，别压到 slogan
+  if (wide > 3.4) fanField(W * 0.635, H * 0.05, W * 0.335, H * 0.88);
+  else             fanField(W * 0.80,  H * 0.05, W * 0.175, H * 0.88);
+
+  // 底部基座刻度
+  ctx.save();
+  ctx.strokeStyle = C.gold; ctx.globalAlpha = 0.26; ctx.lineWidth = Math.max(1, H * 0.0035);
+  const y = H * 0.945, x0 = W * 0.045, x1 = W * 0.955;
+  ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x1, y); ctx.stroke();
+  const NT = Math.round(40 * (W / 1920) + 20);
+  for (let i = 0; i <= NT; i++) {
+    const xx = x0 + (x1 - x0) * (i / NT);
+    const len = (i % 10 === 0) ? H * 0.070 : (i % 5 === 0 ? H * 0.040 : H * 0.022);
+    ctx.beginPath(); ctx.moveTo(xx, y); ctx.lineTo(xx, y - len); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ══════════════════════════════════════════════════════
+//  G · 头像 v3：**一道墨弧**（不是尺，不是镜头，不是台标）
+//
+//  v2 做成了「弧形尺」，结果像齿轮/风扇 —— 刻度向外射出，读不出是尺。
+//  v3 把刻度**全部删掉**：只留一道毛笔一般、一头粗一头细的墨弧。
+//    它不带任何工具特征（无刻度、无轴、无准星），也不带任何机构特征（无环、无徽、无字）。
+//    它就是一笔——笔起笔落，刚好圈住一个圆。
+//
+//  为什么这个形状能站住：中国书法里的「一笔」本身就是一个完整的动作，
+//    圈是最基础的一个动作；形体简到极致，缩到 48px 也不糊。
+// ══════════════════════════════════════════════════════
+function variantG() {
+  const M = Math.min(W, H);
+  const cx0 = W * 0.5, cy0 = H * 0.5;
+
+  // ① 纸：暖白，上左微亮
+  ctx.fillStyle = '#F1EBDE'; ctx.fillRect(0, 0, W, H);
+  const pg = ctx.createRadialGradient(W * 0.36, H * 0.32, 0, cx0, cy0, M * 0.90);
+  pg.addColorStop(0.00, 'rgba(255,252,246,.96)');
+  pg.addColorStop(0.55, 'rgba(238,231,218,.30)');
+  pg.addColorStop(1.00, 'rgba(203,194,178,.55)');
+  ctx.fillStyle = pg; ctx.fillRect(0, 0, W, H);
+
+  // ② 一笔墨弧：弧长 340°、一头粗一头细
+  //    用分段绘制而不是一条等宽线 —— 挥笔起笔重、收笔轻，才像真写的。
+  const R = M * 0.285;
+  const A0 = -Math.PI * 0.44;
+  const A1 = A0 + Math.PI * 1.88;
+  const STEPS = 220;
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (let i = 0; i < STEPS; i++) {
+    const u0 = i / STEPS, u1 = (i + 1) / STEPS;
+    const th0 = A0 + (A1 - A0) * u0, th1 = A0 + (A1 - A0) * u1;
+    // 笔宽：起笔突然变粗，中段匀称，收笔渐细到尖
+    const wgt = Math.pow(Math.sin(Math.PI * Math.pow(u0, 0.72)), 0.55);
+    const rw = M * (0.013 + 0.062 * wgt);
+    // 径向微微不规则，免得像圆规画的
+    const wob = 1 + 0.016 * Math.sin(th0 * 3 + 0.8) + 0.010 * Math.sin(th0 * 7);
+    const r0 = R * wob;
+    ctx.beginPath();
+    ctx.moveTo(cx0 + Math.cos(th0) * r0, cy0 + Math.sin(th0) * r0);
+    ctx.lineTo(cx0 + Math.cos(th1) * r0, cy0 + Math.sin(th1) * r0);
+    ctx.strokeStyle = '#17161A';
+    ctx.lineWidth = rw;
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // ③ 落笔处一小点十字形的重墨（书法里的起笔顿笔）
+  const sx = cx0 + Math.cos(A0) * R * 1.005;
+  const sy = cy0 + Math.sin(A0) * R * 1.005;
+  ctx.fillStyle = '#17161A';
+  ctx.beginPath(); ctx.arc(sx, sy, M * 0.028, 0, Math.PI * 2); ctx.fill();
+
+  // ④ 收笔处一粒金（涅区，只起点缀）
+  const ex = cx0 + Math.cos(A1) * R * 0.995;
+  const ey = cy0 + Math.sin(A1) * R * 0.995;
+  ctx.fillStyle = '#B08A2E';
+  ctx.beginPath(); ctx.arc(ex, ey, M * 0.021, 0, Math.PI * 2); ctx.fill();
+}
+
+// ══════════════════════════════════════════════════════
+//  H · 空间图（按平台各自比例排版，内容一律避开头像区）
+//
+//  实测两家的可见比例差得很远：
+//    · 小红书 ≈ 1.245 : 1（编辑框 685×550，接近 5:4）
+//    · 抖音   ≈ 2.17  : 1（banner 738×340，极扁）
+//  之前用 4:1 一张图铺所有平台，两边都被裁掉右半边 ——
+//  「讲未曾想清楚」只剩半句。**比例不同必须分别排版，不能靠缩放。**
+//
+//  安全区（相对画面）：
+//    · 抖音：头像 x 0–27% / y 37–82%，昵称 x 28–61% / y 10–22%
+//      → 左侧 62% 全被占，内容只能放右侧，但纵向可用全高
+//    · 小红书：头像压在左侧约 x 5–25%
+//      → 左侧 45% 留空，内容放中间偏右
+//
+//  内容垂直堆叠在中右部：名字 → INK HORIZON → 短线 → slogan。
+//  slogan 用 fitText 按剩余宽度自动缩字号，永不出框。
+//
+//  ⚠️ **空间图里不放墨环。**
+//  抖音主页实测：空间图与头像是**上下叠在同一屏**的（头像在左下，banner 在上，
+//  两者只隔几十像素）。两张图都画墨环，同一屏上出现两个同样的图案 ——
+//  看起来像上传错了，也把「记号」稀释成了「壁纸」。
+//  所以分工是：**头像负责记号（墨环），空间图负责声音（名字 + slogan）**。
+//  空间图里只留一道极细的横线做「观测线」，与环的内壁刻度呼应但不成重复。
+// ══════════════════════════════════════════════════════
+function variantH() {
+  const wide = W / H;
+  const isDouyin = wide >= 1.8;
+
+  // 墨底（与头像、成片同一套），中右一团极淡暖光
+  ctx.fillStyle = '#0B0C0E'; ctx.fillRect(0, 0, W, H);
+  const glow = ctx.createRadialGradient(W * 0.72, H * 0.45, 0, W * 0.72, H * 0.45, W * 0.55);
+  glow.addColorStop(0.00, 'rgba(48,45,40,.85)');
+  glow.addColorStop(0.55, 'rgba(24,23,21,.45)');
+  glow.addColorStop(1.00, 'rgba(9,10,12,0)');
+  ctx.fillStyle = glow; ctx.fillRect(0, 0, W, H);
+
+  const cxB = W * (isDouyin ? 0.79 : 0.70);
+  const leftLimit = W * (isDouyin ? 0.62 : 0.45);
+  const rightLimit = W * 0.95;
+  const maxW = Math.min(rightLimit - cxB, cxB - leftLimit) * 2;
+
+  // ── 垂直排版：先算出整块内容多高，再整体居中 ────────────────
+  // ⚠️ 原来是把每个元素写死成 H 的百分比（0.355 / 0.600 / 0.615 …），
+  //    结果整块压在画面下半部，上方空一大片，重心是塌的。
+  //    改成"从顶到底量一遍再居中"，换任何比例都不会偏。
+  const nameSize = H * (isDouyin ? 0.125 : 0.108);
+  const enSize = H * (isDouyin ? 0.038 : 0.034);
+  const sloSize = H * (isDouyin ? 0.056 : 0.048);
+  const hdrSize = H * (isDouyin ? 0.026 : 0.024);
+  const gapHdrName = H * 0.085;
+  const gapNameEn = H * 0.082;
+  const gapEnRule = H * 0.070;
+  const gapRuleSlo = H * 0.085;
+
+  const blockH = hdrSize + gapHdrName + nameSize + gapNameEn + enSize
+               + gapEnRule + gapRuleSlo + sloSize;
+  let yTop = (H - blockH) * 0.5;               // 整块居中
+
+  // ① 眼睛：一行极小的字，装作抬头 —— 没有图案，只有版面的「上边」
+  txt('OBSERVATION NO.001', cxB, yTop + hdrSize * 0.80,
+      { font: F.mono(hdrSize), color: C.gold, align: 'center', track: H * 0.012, a: 0.72 });
+  yTop += hdrSize + gapHdrName;
+
+  // ② 名字：空间图的主角（头像里已经有记号了，这里只放名字）
+  const nameY = yTop + nameSize * 0.82;
+  txt('墨点视界', cxB, nameY,
+      { font: F.bigH(nameSize), color: C.paper, align: 'center', track: nameSize * 0.07 });
+  yTop += nameSize + gapNameEn;
+
+  const enY = yTop + enSize * 0.80;
+  txt('INK HORIZON', cxB, enY,
+      { font: F.mono(enSize), color: C.dim, align: 'center', track: H * 0.016 });
+  yTop += enSize + gapEnRule;
+
+  // ③ 观测线：一条横贯的极细金线，两端各一道短竖刻 ——
+  //    这是头像里「环内壁刻度」的同源语汇，但排成一条线，不和环重复
+  const ruleY = yTop;
+  ctx.save();
+  ctx.globalAlpha = 0.30; ctx.fillStyle = C.gold;
+  const fullW = maxW * 0.92;
+  ctx.fillRect(cxB - fullW / 2, ruleY, fullW, Math.max(1, H * 0.0035));
+  ctx.globalAlpha = 0.55;
+  const tickH = H * 0.028;
+  [-1, 1].forEach(sgn => {
+    ctx.fillRect(cxB + sgn * fullW / 2 - Math.max(1, H * 0.003) / 2, ruleY - tickH / 2,
+                 Math.max(1, H * 0.003), tickH);
+  });
+  ctx.restore();
+  yTop += gapRuleSlo;
+
+  fitText('用未曾见过的画面，讲未曾想清楚的问题',
+      cxB, yTop + sloSize * 0.80,
+      { fontFn: F.sub, targetW: maxW, maxSize: sloSize,
+        color: C.paper2, align: 'center', track: H * 0.008 });
+
+  if (W > 1500) {
+    ctx.save();
+    ctx.globalAlpha = 0.16; ctx.strokeStyle = C.gold;
+    ctx.lineWidth = Math.max(1, H * 0.003);
+    const xr = W * 0.975, y0 = H * 0.20, y1 = H * 0.80;
+    for (let i = 0; i <= 12; i++) {
+      const yy = y0 + (y1 - y0) * (i / 12);
+      const len = (i % 3 === 0) ? H * 0.045 : H * 0.024;
+      ctx.beginPath(); ctx.moveTo(xr, yy); ctx.lineTo(xr - len, yy); ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+if (V === 'a') variantA();
+else if (V === 'b') variantB();
+else if (V === 'c') variantC();
+else if (V === 'd') variantD();
+else if (V === 'f') variantF();
+else if (V === 'g') variantG();
+else if (V === 'h') variantH();
+else variantE();
+
+window.render = () => {};
+window.READY = true;
+</script>
+</body>
+</html>
