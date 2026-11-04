@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOT = 'C:/Users/ZhiMo/Documents/deepseek-harness/创作工作区/vibe-10w/film';
+const ROOT = process.cwd();
 const OUT  = path.join(ROOT, 'out');
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.jpg':'image/jpeg',
                '.png':'image/png', '.woff2':'font/woff2', '.css':'text/css', '.ttf':'font/ttf' };

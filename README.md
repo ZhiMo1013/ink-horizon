@@ -93,9 +93,11 @@ scripts/
 
 ## License
 
-代码 MIT（见 CREDITS.md 里的第三方声明）。
-文档 CC BY 4.0 —— 拿去改、拿去教、拿去卖课都行，署名就行。
-**唯一要求：保留 `CREDITS.md`。**
+**MIT**（全文见 `LICENSE`）。代码和文档都是。
+
+MIT 允许别人用、改、再分发、商用，只要保留版权声明和许可声明。
+
+第三方代码的许可在 `CREDITS.md` 里逐条列了，原 LICENSE 全文在 `scripts/THIRD-PARTY-LICENSE.md`。
 
 ---
 

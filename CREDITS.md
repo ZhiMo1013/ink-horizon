@@ -11,8 +11,8 @@
 |---|---|---|---|
 | [garden-skills · motion-showreel](https://github.com/ConardLi/garden-skills) | ConardLi | **MIT** | `scripts/render.mjs`、`scripts/audio.mjs`、`scripts/inspect.mjs`、`scripts/lib/*`、`assets/starter/motion.js` |
 | [vibe-knowledge-film](https://github.com/HeyChengC/vibe-knowledge-film) | HeyChengC | MIT | 内容设计思路（找形象、分镜表、逐句演出来） |
-| [vibe-knowledge-video-skill](https://github.com/LuZhong-Li/vibe-knowledge-video-skill) | LuZhong-Li | — | 体检脚本的思路（越界/碰撞/可读性） |
-| [vibe-knowledge-video](https://github.com/xiazhuo123456789/vibe-knowledge-video) | xiazhuo | — | 节拍网格与质量门 |
+| [vibe-knowledge-video-skill](https://github.com/LuZhong-Li/vibe-knowledge-video-skill) | LuZhong-Li | **MIT** | 体检脚本的思路（越界/碰撞/可读性） |
+| [vibe-knowledge-video](https://github.com/xiazhuo123456789/vibe-knowledge-video) | xiazhuo | **MIT** | 节拍网格与质量门 |
 
 `scripts/lib/synth.mjs`（配乐合成）与 `scripts/lib/tone-render.mjs` 来自 motion-showreel（MIT）。
 
