@@ -1,21 +1,54 @@
-MIT License
+# 许可 —— 这个仓库有两种，按内容分
 
-Copyright (c) 2026 纸墨 (ZhiMo) — 墨点视界 / INK HORIZON
+**© 2026 纸墨（墨点视界 / INK HORIZON）**
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+这不是一个「选了哪种」的问题。仓库里本来就装着两类东西，它们的许可**不能统一**，原因见下面第二节。
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+---
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+## 一、我写的部分 —— 非商业（CC BY-NC-SA 4.0）
+
+| 路径 | 内容 |
+|---|---|
+| `SKILL.md` | 整套方法论 |
+| `README.md` / `INSTALL.md` | 说明 |
+| `references/**` | 参考片拆解、实测数据、发布指南、账号简介 |
+| `assets/starter/cover.html` | 封面排版页面 |
+| `assets/starter/cover.mjs` | 封面渲染器 |
+| `scripts/new-film.mjs` | 建工程脚手架 |
+| `pack.mjs` | 打包器 |
+
+许可全文与「商业使用」的定义：**[`LICENSE-内容.md`](LICENSE-内容.md)**
+
+一句话：**可以学、可以改、可以转载（要署名）；不能拿去卖课、卖模板、接商用单、装进付费产品。**
+
+---
+
+## 二、别人的代码 —— MIT 与 OFL，改不了
+
+`scripts/render.mjs`、`scripts/audio.mjs`、`scripts/inspect.mjs`、`scripts/check-env.mjs`、
+`scripts/lib/**`、`assets/starter/motion.js`、`assets/starter/preview.js`、
+`assets/starter/index.html`、`assets/starter/timeline.js`、`assets/starter/score.mjs`
+
+这些是从四个上游仓库（ConardLi / HeyChengC / LuZhong-Li / xiazhuo）拿来的 **MIT** 代码，
+其中六个文件是 MD5 逐字节一致的**原样拷贝**，其余是在它们基础上的改写。
+
+MIT 原文与各文件的对应关系：**[`LICENSE-MIT.txt`](LICENSE-MIT.txt)**、**[`CREDITS.md`](CREDITS.md)**
+
+`assets/fonts/**` 是 **SIL OFL 1.1**（见 `assets/fonts/OFL.txt`）。
+
+**为什么不能改成非商业：** MIT 的授权一旦发出就收不回来。任何人拿到这份代码，
+已经依法拥有「使用、修改、再分发、**商用**」的权利。
+我在上面再盖一份「禁止商用」的章，不会约束到任何人，只会让我自己违约。
+**那是在骗自己，不是保护自己。**
+
+---
+
+## 三、所以别人到底能不能商用
+
+**引擎能。** 那些是别人写的 MIT 代码，本来就不是我的，我没资格限制。
+
+**方法论不能。** 这个 skill 真正值钱的是 `SKILL.md` 和 `references/` 里的判断——
+那是我用二十几个版本、两次被否、删掉又重建的文件换来的。那部分是 CC BY-NC-SA 4.0。
+
+想用这套流程赚钱的人，得自己重新把这些弯路走一遍。

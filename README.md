@@ -93,11 +93,20 @@ scripts/
 
 ## License
 
-**MIT**（全文见 `LICENSE`）。代码和文档都是。
+**这个仓库有两种许可，按内容分**（全文见 [`LICENSE`](LICENSE)）：
 
-MIT 允许别人用、改、再分发、商用，只要保留版权声明和许可声明。
+| 部分 | 许可 | 能商用吗 |
+|---|---|---|
+| 我写的（`SKILL.md`、`references/`、封面页、脚手架、打包器） | [CC BY-NC-SA 4.0](LICENSE-内容.md) | **不能** |
+| 上游代码（`render.mjs`、`audio.mjs`、`inspect.mjs`、`lib/`、`motion.js` 等） | [MIT](LICENSE-MIT.txt) | 能（这是别人的代码，我改不了） |
+| 字体（`assets/fonts/`） | SIL OFL 1.1 | 能（但不得单独售卖字体文件） |
 
-第三方代码的许可在 `CREDITS.md` 里逐条列了，原 LICENSE 全文在 `scripts/THIRD-PARTY-LICENSE.md`。
+**为什么不能整包非商业**：MIT 授权一旦发出就收不回来，任何人拿到那部分代码就已经有商用权。
+我再盖一份「禁止商用」的章，约束不到别人，只是我自己违约。
+
+所以实际效果是：**引擎随便用，方法论不许卖。** 这个 skill 真正值钱的是 `SKILL.md` 和 `references/` 里的判断。
+
+第三方来源逐条列在 [`CREDITS.md`](CREDITS.md)。
 
 ---
 

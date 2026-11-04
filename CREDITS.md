@@ -1,7 +1,7 @@
 # 来源与许可（CREDITS）
 
 这个 skill 由纸墨（墨点视界 / INK HORIZON）与我共同打磨，
-© 2026 纸墨。以 MIT 许可发布。
+© 2026 纸墨。本仓库分两种许可：我写的部分为 CC BY-NC-SA 4.0（非商业），上游代码仍为 MIT。详见 `LICENSE`。
 
 ## 代码出处
 
@@ -16,7 +16,7 @@
 
 `scripts/lib/synth.mjs`（配乐合成）与 `scripts/lib/tone-render.mjs` 来自 motion-showreel（MIT）。
 
-**MIT 要求保留版权声明**：`scripts/THIRD-PARTY-LICENSE.md` 里有原始 LICENSE 全文。
+**MIT 要求保留版权声明**：原始 LICENSE 全文在 [`LICENSE-MIT.txt`](LICENSE-MIT.txt)（含每个文件的对应关系）。
 
 ## 字体
 
